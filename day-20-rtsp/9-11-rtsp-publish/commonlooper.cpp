@@ -1,12 +1,19 @@
 ﻿#include "commonlooper.h"
 #include "dlog.h"
-void *CommonLooper::trampoline(void *p)
+
+/**
+ * @brief 线程回调函数，内部调用真正的线程回调函数。
+ * @param p 回调函数参数。
+ * @return no mean.
+ */
+void* CommonLooper::trampoline(void *p)
 {
     LogInfo("into");
     ((CommonLooper*)p)->SetRunning(true);
     ((CommonLooper*)p)->Loop();
      ((CommonLooper*)p)->SetRunning(false);
     LogInfo("leave");
+
     return NULL;
 }
 
@@ -22,6 +29,10 @@ CommonLooper::~CommonLooper()
     Stop();
 }
 
+/**
+ * @brief 创建一个线程并启动。
+ * @return success 0 fail -1.
+ */
 RET_CODE CommonLooper::Start()
 {
     LogInfo("into");
@@ -30,12 +41,18 @@ RET_CODE CommonLooper::Start()
         LogError("new std::this_thread failed");
         return RET_FAIL;
     }
+
     return RET_OK;
 }
 
+/**
+ * @brief 使用join停止一个线程。
+ * @return void.
+ */
 void CommonLooper::Stop()
 {
     request_abort_ = true;
+    //running_ = false;     // running_统一在trampoline管理即可。
     if(worker_) {
         worker_->join();
         delete worker_;

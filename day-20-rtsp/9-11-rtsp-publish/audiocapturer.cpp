@@ -21,27 +21,38 @@ AudioCapturer::~AudioCapturer()
     }
 }
 
+/**
+ * @brief 初始化参数。
+ * @param properties 参数属性容器，由上层传入。
+ * @return success 0 fail return a negative number。
+ */
 RET_CODE AudioCapturer::Init(const Properties properties)
 {
-    audio_test_ = properties.GetProperty("audio_test", 0);
-    input_pcm_name_ = properties.GetProperty("input_pcm_name", "buweishui_48000_2_s16le.pcm");
-    sample_rate_ = properties.GetProperty("sample_rate", 48000);
-    channels_  = properties.GetProperty("channels", 2);
-    byte_per_sample_  = properties.GetProperty("byte_per_sample", 2);    // 单个采样点
-    nb_samples_  = properties.GetProperty("nb_samples", 1024);
-    format_ = properties.GetProperty("format", AV_SAMPLE_FMT_S16);  //  2
-    pcm_buf_size_ = byte_per_sample_ *channels_ *  nb_samples_;
+    // 从上层获取参数并保存
+    audio_test_         = properties.GetProperty("audio_test", 0);
+    input_pcm_name_     = properties.GetProperty("input_pcm_name", "buweishui_48000_2_s16le.pcm");
+    sample_rate_        = properties.GetProperty("sample_rate", 48000);
+    channels_           = properties.GetProperty("channels", 2);
+    byte_per_sample_    = properties.GetProperty("byte_per_sample", 2);         // 单个采样点所占用字节数，默认s16故是2字节，前3个为音频3要素
+
+    nb_samples_         = properties.GetProperty("nb_samples", 1024);
+    format_             = properties.GetProperty("format", AV_SAMPLE_FMT_S16);
+
+    // 计算一帧所占大小，必须是根据传入参数去计算
+    pcm_buf_size_       = byte_per_sample_ * channels_ *  nb_samples_;
     pcm_buf_ = new uint8_t[pcm_buf_size_];
     if(!pcm_buf_)
     {
         return RET_ERR_OUTOFMEMORY;
     }
+
     if(openPcmFile(input_pcm_name_.c_str()) < 0)
     {
         LogError("openPcmFile %s failed", input_pcm_name_.c_str());
         return RET_FAIL;
     }
-    frame_duration_ = 1.0 * nb_samples_ / sample_rate_ * 1000;  // 得到一帧的毫秒时间
+    // 必须是根据传入参数去计算
+    frame_duration_ = 1.0 * nb_samples_ / sample_rate_ * 1000;  // 得到一帧的毫秒时间，1000先乘或者后乘结果都一样，基本到小数点20位后才可能不太准
 
     return RET_OK;
 }
@@ -76,6 +87,10 @@ void AudioCapturer::AddCallback(function<void (uint8_t *, int32_t)> callback)
     callback_get_pcm_ = callback;
 }
 
+/**
+ * @brief 以只读方式打开一个文件。
+ * @return success 0 fail return a negative number。
+ */
 int AudioCapturer::openPcmFile(const char *file_name)
 {
     pcm_fp_ = fopen(file_name, "rb");
@@ -86,20 +101,27 @@ int AudioCapturer::openPcmFile(const char *file_name)
     return 0;
 }
 
+/**
+ * @brief 以只读方式打开一个文件。
+ * @param pcm_buf
+ * @param pcm_buf_size
+ * @return success 0 fail return other。
+ */
 int AudioCapturer::readPcmFile(uint8_t *pcm_buf, int32_t pcm_buf_size)
 {
     int64_t cur_time = TimesUtil::GetTimeMillisecond();     // 单位毫秒
-    int64_t dif = cur_time - pcm_start_time_;       // 目前经过的时间
+    int64_t dif = cur_time - pcm_start_time_;               // 目前经过的时间
     if(((int64_t)pcm_total_duration_) > dif) {
-        return 1;          // 还没有到读取新一帧的时间
+        return 1;                                           // 还没有到读取新一帧的时间
     }
+
     // 读取数据
     size_t ret = fread(pcm_buf_, 1, pcm_buf_size, pcm_fp_);
     if(ret != pcm_buf_size) {
-        ret = fseek(pcm_fp_, 0, SEEK_SET);      // 没有足够数据就从头继续开始读取
+        ret = fseek(pcm_fp_, 0, SEEK_SET);                  // 没有足够数据就从头继续开始读取
         ret = fread(pcm_buf_, 1, pcm_buf_size, pcm_fp_);
         if(ret != pcm_buf_size) {
-            return -1;      // 出错
+            return -1;                                      // 出错
         }
     }
 
@@ -107,6 +129,10 @@ int AudioCapturer::readPcmFile(uint8_t *pcm_buf, int32_t pcm_buf_size)
     return 0;
 }
 
+/**
+ * @brief 关闭一个已经打开的文件。
+ * @return no mean。
+ */
 int AudioCapturer::closePcmFile()
 {
     if(pcm_fp_)
