@@ -26,7 +26,7 @@ extern "C" {
 
 //#define RTSP_URL "rtsp://111.229.231.225/live/livestream"
 //#define RTSP_URL "rtsp://192.168.2.132/live/livestream"
-#define RTSP_URL "rtsp://192.168.1.9/live/livestream"
+#define RTSP_URL "rtsp://192.168.1.118/live/livestream"
 // ffmpeg -re -i  rtsp_test_hd.flv  -vcodec copy -acodec copy  -f flv -y rtsp://111.229.231.225/live/livestream
 // ffmpeg -re -i  rtsp_test_hd.flv  -vcodec copy -acodec copy  -f flv -y rtsp://192.168.1.12/live/livestream
 // ffmpeg -re -i  1920x832_25fps.flv  -vcodec copy -acodec copy  -f flv -y rtsp://111.229.231.225/live/livestream
