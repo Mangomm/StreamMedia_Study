@@ -42,6 +42,11 @@ void VideoCapturer::Loop()
 {
     LogInfo("into loop");
 
+    // 1）一帧yuv占用的字节数量，宽高各自取余是：若分辨率是奇数，则需要增大一帧的buf。
+    // 例如3x3.不取余则是：3x3x1.5=13.5，但是奇数分辨率在内存中仍会开辟成奇数+1的偶数的乘积大小，只是不占数据而已0~3的下标3不存数据(猜想FFmpeg可能就这么做的)。
+    // 所以实际一帧的内存就是4x4x1.5=24，再用13.5的buf存就会溢出，所以必须取余各自增1后再乘以1.5.这样buf才是24，能存下最大一帧的字节数24.
+    // 或者上面可以在Init初始化时，若x_、y_是奇数就直接返回，也是处理的一种方法。
+    // 2）并且注意，这里乘以1.5是因为他用yuv420的格式了，重写时必须优化掉，不能写死为1.5。
     yuv_buf_size =(width_ + width_%2)  * (height_ + height_%2) * 1.5;   // 一帧yuv占用的字节数量
     yuv_buf_ = new uint8_t[yuv_buf_size];
     yuv_total_duration_ = 0;
@@ -54,8 +59,10 @@ void VideoCapturer::Loop()
         }
         if(readYuvFile(yuv_buf_, yuv_buf_size) == 0)
         {
+            // 打印采集首帧视频的时间戳，方便对比编码、推流时的时间戳，以获取延时，方便debug。
             if(!is_first_frame_) {
                 is_first_frame_ = true;
+                // 这里打印时间戳时是单例，后续推多路时，不能将获取时间戳写成单例，否则获取延时肯定是不对的
                 LogInfo("%s:t%u", AVPublishTime::GetInstance()->getVInTag(),
                         AVPublishTime::GetInstance()->getCurrenTime());
             }

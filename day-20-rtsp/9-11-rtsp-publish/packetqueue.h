@@ -12,12 +12,12 @@ extern "C"
 
 typedef struct packet_queue_stats
 {
-    int audio_nb_packets;   // 音频包数量
-    int video_nb_packets;   // 视频包数量
-    int audio_size;         // 音频总大小 字节
-    int video_size;         // 视频总大小 字节
-    int64_t audio_duration; //音频持续时长
-    int64_t video_duration; //视频持续时长
+    int     audio_nb_packets;           // 音频包数量
+    int     video_nb_packets;           // 视频包数量
+    int     audio_size;                 // 音频总大小 字节
+    int     video_size;                 // 视频总大小 字节
+    int64_t audio_duration;             // 音频持续时长
+    int64_t video_duration;             // 视频持续时长
 }PacketQueueStats;
 
 typedef struct my_avpacket
