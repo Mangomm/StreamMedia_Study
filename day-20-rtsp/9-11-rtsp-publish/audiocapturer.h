@@ -46,7 +46,7 @@ private:
     int nb_samples_ = 1024;
     int format_ = 1;                                                // 目前固定s16先
 
-    bool is_first_time_ = false;
+    bool is_first_time_ = false;                                    // 是否是首帧
 };
 
 #endif // AUDIOCAPTURER_H

@@ -18,6 +18,9 @@ extern "C" {
  * 去掉视频：ffmpeg.exe -i source.200kbps.768x320.flv -vn -f s16le -ar 48000 -ac 2 buweishui_48000_2_s16le.pcm
  * 测试视频是否解码成功： ffplay -f rawvideo -video_size 768x480 720x480_25fps_420p.yuv
  * 测试音频是否解码成功： ffplay -ar 48000 -ac 2 -f s16le -i buweishui_48000_2_s16le.pcm
+ *
+ * 命令推rtsp：ffmpeg -re -s 768*480 -pix_fmt yuv420p -i 720x480_25fps_420p.yuv -vcodec libx264 -f rtsp rtsp://192.168.2.38/live/livestream
+ *
 */
 
 //减少缓冲 ffplay.exe -i rtmp://xxxxxxx -fflags nobuffer
@@ -26,7 +29,7 @@ extern "C" {
 
 //#define RTSP_URL "rtsp://111.229.231.225/live/livestream"
 //#define RTSP_URL "rtsp://192.168.2.132/live/livestream"
-#define RTSP_URL "rtsp://192.168.1.118/live/livestream"
+#define RTSP_URL "rtsp://192.168.2.38/live/livestream"
 // ffmpeg -re -i  rtsp_test_hd.flv  -vcodec copy -acodec copy  -f flv -y rtsp://111.229.231.225/live/livestream
 // ffmpeg -re -i  rtsp_test_hd.flv  -vcodec copy -acodec copy  -f flv -y rtsp://192.168.1.12/live/livestream
 // ffmpeg -re -i  1920x832_25fps.flv  -vcodec copy -acodec copy  -f flv -y rtsp://111.229.231.225/live/livestream
@@ -68,10 +71,10 @@ int main()
         // 桌面录制属性(采集部分)
         properties.SetProperty("desktop_x", 0);
         properties.SetProperty("desktop_y", 0);
-        properties.SetProperty("desktop_width", 720);               //测试模式时和yuv文件的宽度一致
-        properties.SetProperty("desktop_height", 480);              //测试模式时和yuv文件的高度一致
+        properties.SetProperty("desktop_width", 720);               // 测试模式时和yuv文件的宽度一致
+        properties.SetProperty("desktop_height", 480);              // 测试模式时和yuv文件的高度一致
         // properties.SetProperty("desktop_pixel_format", AV_PIX_FMT_YUV420P);
-        properties.SetProperty("desktop_fps", 25);                  //测试模式时和yuv文件的帧率一致
+        properties.SetProperty("desktop_fps", 25);                  // 测试模式时和yuv文件的帧率一致
         // 视频编码属性(编码部分)
         properties.SetProperty("video_bitrate", 512 * 1024);        // 设置码率
 
@@ -80,7 +83,7 @@ int main()
         //2.udp
         properties.SetProperty("rtsp_url", RTSP_URL);
         properties.SetProperty("rtsp_transport", "udp");            // udp or tcp
-        properties.SetProperty("rtsp_timeout", 15000);
+        properties.SetProperty("rtsp_timeout", 5000);               // connect server timeout
         properties.SetProperty("rtsp_max_queue_duration", 1000);
 
         if(push_work.Init(properties) != RET_OK) {
