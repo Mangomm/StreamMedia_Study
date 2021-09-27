@@ -13,3 +13,11 @@ V1.1.0：
 	2）但是将上面的h264同样的命令解码后，放在自己的电脑去推流又没有问题。
 	
 	3）目前初步判断公司电脑中，dump yuv的时候出现问题了。(可是不是同样的代码吗？还是留在最后解决吧)
+	
+V1.1.1：
+	看完packetqueue.h。
+看完的目前为止不怎么理解透彻的有：
+	1）算队列中的时长时，audio_front_pts_更新为出队列的pts，即audio_front_pts_ = mypkt->pkt->pts; 视频同理。
+	后续需要研究一下pushPrivate的打印”LogInfo("video_back_pts_: %lld, video_front_pts_: %lld, stats_.video_nb_packets: %d",video_back_pts_, video_front_pts_, stats_.video_nb_packets);“显示的内容，
+	搞懂求出的队列的duration实际是n-1的时长，而为什么不是n帧的时长。这可能涉及到编码前后打时间戳的内容。
+	研究上面pushPrivate的内容，实际就是研究Drop的"int64_t duration = video_back_pts_ - video_front_pts_;"，这样packetqueue.h队列你就理解透彻了。

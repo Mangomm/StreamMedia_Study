@@ -77,6 +77,7 @@ void VideoCapturer::Loop()
         if(request_abort_) {
             break;
         }
+
         if(readYuvFile(yuv_buf_, yuv_buf_size) == 0)
         {
             // 打印采集首帧视频的时间戳，方便对比编码、推流时的时间戳，以获取延时，方便debug。
@@ -94,6 +95,7 @@ void VideoCapturer::Loop()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+
     request_abort_ = false;
     closeYuvFile();
 }
@@ -165,6 +167,10 @@ int VideoCapturer::readYuvFile(uint8_t *yuv_buf, int32_t yuv_buf_size)
     return 0;
 }
 
+/**
+ * @brief 关闭一个已经打开的文件。
+ * @return no mean。
+ */
 int VideoCapturer::closeYuvFile()
 {
     if(yuv_fp_)

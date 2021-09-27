@@ -57,8 +57,8 @@ RET_CODE AACEncoder::Init(const Properties &properties)
 
     // 3 编码器与编码器上下文关联.
     // 注意区分与SDK的步骤：
-    // 1）编码调用avcodec_open2，SDK中是在解码调用avformat_new_stream(this->m_outputContext, codec)关联。
-    // 2）并且注意和打开网络流avio_open2函数不太一样，avio_open2也是在解码中使用。
+    // 1）编码调用avcodec_open2，SDK中同样是在编码调用avformat_new_stream(this->m_outputContext, codec)关联。
+    // 2）并且注意和打开网络流avio_open2函数不太一样，avio_open2也是在编码中使用。
     //      调用方式：avio_open2(&m_outputContext->pb, outUrl.c_str(), AVIO_FLAG_READ_WRITE, nullptr, &opts);
     // 不过实际这些带codec的在编码或者解码都是可以用的，这里只不过和之前的流程区分一下
     if(avcodec_open2(ctx_, codec_, NULL) < 0) {

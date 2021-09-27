@@ -151,7 +151,7 @@ RTP收流端口都是通过setup命令确认的，所以在ANNOUNCE或者DESCIRB
 	3. 音频、视频的总时长的计算是如何处理的，第一种是通过back_pts-front_pts得出，另一种是依靠用户传进的一帧时长duration*帧数得出，
 		注意duration不能是FFmepg自己算出的即pkt->duration，它是依据pkt->pts算的，可能是0，所以需要的是用户传进的duration去算，
 		不过还是建议使用back_pts-front_pts去算。
-	4. 讲了Pop时的多线程的注意事项，本队列的场景是多个输入，单个线程输出的，所以他这样写不会存在问题。对比线程池的add设计，他是
+	4. 讲了Pop时的多线程的注意事项，本队列的场景是多个输入，单个线程输出的，所以他这样写不会存在问题，实际上包队列也是支持多个输出的。对比线程池的add设计，他是
 		单个输入，多个线程输出的例子，而学cond时的类的例子是单线程输入包，单线程取包，这3者都是不一样的。
 	线程池：https://blog.csdn.net/weixin_44517656/article/details/108691270。
 	学cond时的类的例子：https://blog.csdn.net/weixin_44517656/article/details/112096777。

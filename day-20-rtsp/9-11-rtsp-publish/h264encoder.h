@@ -12,19 +12,11 @@ class H264Encoder
 public:
     H264Encoder();
     virtual ~H264Encoder();
-    /**
-     * @brief Init
-     * @param   width 宽
-     *          height 高
-     *          fps 帧率
-     *          b_frames b帧连续数量
-     *          bitrate 比特率
-     *          gop 多少帧有一个I帧
-     *          pix_fmt 像素格式
-     * @return
-     */
+
     virtual int Init(const Properties &properties);
+
     virtual AVPacket *Encode(uint8_t *yuv, int size, int64_t pts, int *pkt_frame, RET_CODE *ret);
+
     inline uint8_t *get_sps_data() {
         return (uint8_t *)sps_.c_str();
     }
@@ -43,13 +35,14 @@ public:
     AVCodecContext *GetCodecContext() {
         return ctx_;
     }
+
 private:
     int width_ = 0;
     int height_ = 0;
-    int fps_ = 0;       // 帧率
-    int b_frames_ = 0;   // 连续B帧的数量
-    int bitrate_ = 0;   // 码率
-    int gop_ = 0;
+    int fps_ = 0;                                               // 帧率
+    int b_frames_ = 0;                                          // 连续B帧的数量
+    int bitrate_ = 0;                                           // 码率
+    int gop_ = 0;                                               // gop
     bool annexb_  = false;
     int threads_ = 1;
     int pix_fmt_ = 0;
@@ -58,12 +51,12 @@ private:
 
     std::string sps_;
     std::string pps_;
-    std::string codec_name_;
+    std::string codec_name_;                                    // 编码器名字
     AVCodec *codec_         = NULL;
     AVCodecContext  *ctx_   = NULL;
-    AVDictionary *dict_ = NULL;
+    AVDictionary *dict_     = NULL;                             // 编码器的选项设置
 
-    AVFrame *frame_ = NULL;
+    AVFrame *frame_         = NULL;
 };
 
 #endif // H264ENCODER_H
