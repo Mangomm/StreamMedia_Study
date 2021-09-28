@@ -15,6 +15,10 @@ extern "C"
 #include "libavcodec/avcodec.h"
 }
 
+// 是否使用自己的求队列时长的代码
+// 在debugQueue函数发现，用老师的代码看到获取的stats，队列的包数是0，但是获取到的队列视频或者音频时长仍然是40ms-21ms的打印
+// 说明是不匹配的，或者有可能是统计Push或者Pop统计包数等相关信息不太准确，后期还是需要优化一下；而我的是0，说明应该问题不大。
+#define MyDurationCode
 
 // 记录包队列的状态信息
 typedef struct packet_queue_stats
@@ -45,8 +49,8 @@ public:
         if(audio_frame_duration_ < 0) {
             audio_frame_duration_ = 0;
         }
-        if(video_frame_duration < 0) {
-            video_frame_duration = 0;
+        if(video_frame_duration_ < 0) {
+            video_frame_duration_ = 0;
         }
         memset(&stats_, 0, sizeof(PacketQueueStats));
     }
@@ -108,6 +112,9 @@ public:
             stats_.audio_nb_packets++;      // 包数量
             stats_.audio_size += pkt->size;
             // 队列持续时长怎么统计，不是用pkt->duration，而是使用队尾的pts-对头的pts
+            // 虽然这里audio_back_pts_ - audio_front_pts_时，时长会少了一个包的时长，例如队列只有第一帧此时audio_back_pts_ = audio_front_pts_，
+            // 那么duration = audio_back_pts_ - audio_front_pts_ = 0，即有一帧数据但是时长确是0的情况，但是下面在Get时长时，会加上一帧的时长，所以不影响获取队列的时长。视频同理。
+            // 即总结上面：这里统计是这样统计，但是下面获取队列信息的时候，会进行修正，返回的队列时长信息仍然是正确的。
             audio_back_pts_ = pkt->pts;
             if(audio_first_packet) {
                 audio_first_packet  = 0;
@@ -123,8 +130,8 @@ public:
                 video_first_packet  = 0;
                 video_front_pts_ = pkt->pts;
             }
-            LogInfo("video_back_pts_: %lld, video_front_pts_: %lld, stats_.video_nb_packets: %d",
-                    video_back_pts_, video_front_pts_, stats_.video_nb_packets);
+            //LogInfo("video_back_pts_: %lld, video_front_pts_: %lld, stats_.video_nb_packets: %d",
+                    //video_back_pts_, video_front_pts_, stats_.video_nb_packets);
         }
 
         // 一定要push
@@ -288,7 +295,6 @@ public:
      *
      * @return no mean.
     */
-
     int Drop(bool all, int64_t remain_max_duration)
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -304,8 +310,12 @@ public:
                 // 例如以video_front_pts_=76, video_back_pts_分别是76 117 165 197四帧的pts为例，
                 // duration=(41)+(48)+(32)+(最后一帧的时长由它的下一帧pts决定，所以队列中求出的duration实际只有3帧)=121ms.
                 // see pushPrivate的打印
+#ifndef MyDurationCode
                 int64_t duration = video_back_pts_ - video_front_pts_;
-
+#else
+                int64_t duration = video_back_pts_ - video_front_pts_ + video_frame_duration_;    // 我自己的代码
+                //int64_t duration = video_back_pts_ - video_front_pts_;
+#endif
                 // 2.2 也参考帧(包)持续时长 * 帧(包)数
                 // 意思是：duration意外变成负数或者队列时长比队列实际包数的总时长的两倍还要大的话，则自动修正duration，修正为队列的包数的总时长
                 // 这种情况几乎不怎么发生，只是一种比较极端情况的处理
@@ -316,9 +326,12 @@ public:
                             duration, video_frame_duration_, stats_.video_nb_packets);
                 }
 
-                LogInfo("video duration:%lld", duration);
-                if(duration <= remain_max_duration)             // 小于，说明可以break 退出while
-                    break;
+                LogInfo("video duration: %lld", duration);
+                if(duration <= remain_max_duration){
+                    LogInfo("drop break, video duration: %lld", duration);
+                    break;// 小于，说明可以break 退出while
+                }
+
             }
             // 3 音频是否有drop的必要呢？后面看情况和需求再考虑，因为时钟一般以音频为准
 
@@ -357,6 +370,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
         //以pts为准
+#ifndef MyDurationCode
         int64_t duration = audio_back_pts_ - audio_front_pts_;
         // 也参考帧（包）持续 *帧(包)数
         if(duration < 0     // pts回绕
@@ -367,6 +381,17 @@ public:
             duration += audio_frame_duration_;
         }
         return duration;
+#else
+        // 我自己的代码，这样更准确
+        int64_t duration = audio_back_pts_ - audio_front_pts_ + audio_frame_duration_;
+        // 也参考帧（包）持续 *帧(包)数
+        if(duration < 0     // pts回绕
+                || duration > audio_frame_duration_ * stats_.audio_nb_packets * 2) {
+            duration =  audio_frame_duration_ * stats_.audio_nb_packets;
+        }
+
+        return duration;
+#endif
     }
 
     /**
@@ -378,7 +403,9 @@ public:
     int64_t GetVideoDuration()
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        int64_t duration = video_back_pts_ - video_front_pts_;  //以pts为准
+        //以pts为准
+#ifndef MyDurationCode
+        int64_t duration = video_back_pts_ - video_front_pts_;
         // 也参考帧（包）持续 *帧(包)数
         if(duration < 0     // pts回绕
                 || duration > video_frame_duration_ * stats_.video_nb_packets * 2) {
@@ -387,6 +414,17 @@ public:
             duration += video_frame_duration_;
         }
         return duration;
+#else
+        // 我自己的代码，这样更准确
+        int64_t duration = video_back_pts_ - video_front_pts_ + video_frame_duration_;
+        // 也参考帧（包）持续 *帧(包)数
+        if(duration < 0     // pts回绕
+                || duration > video_frame_duration_ * stats_.video_nb_packets * 2) {
+            duration =  video_frame_duration_ * stats_.video_nb_packets;
+        }
+
+        return duration;
+#endif
     }
 
     /**
@@ -423,6 +461,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         // 1 获取音频时长
         // 以pts为准
+#ifndef MyDurationCode
         int64_t audio_duration = audio_back_pts_ - audio_front_pts_;
         // 也参考帧（包）持续 *帧(包)数
         if(audio_duration < 0     // pts回绕
@@ -431,9 +470,19 @@ public:
         }else {
             audio_duration += audio_frame_duration_;
         }
+#else
+        // 我自己的代码
+        int64_t audio_duration = audio_back_pts_ - audio_front_pts_ + audio_frame_duration_;
+        // 也参考帧（包）持续 *帧(包)数
+        if(audio_duration < 0     // pts回绕
+                || audio_duration > audio_frame_duration_ * stats_.audio_nb_packets * 2) {
+            audio_duration =  audio_frame_duration_ * stats_.audio_nb_packets;
+        }
+#endif
 
         // 2 获取视频时长
         // 以pts为准
+#ifndef MyDurationCode
         int64_t video_duration = video_back_pts_ - video_front_pts_;
         // 也参考帧（包）持续 *帧(包)数
         if(video_duration < 0     // pts回绕
@@ -442,8 +491,18 @@ public:
         }else {
             video_duration += video_frame_duration_;
         }
+#else
+        // 我自己的代码
+        int64_t video_duration = video_back_pts_ - video_front_pts_ + video_frame_duration_;
+        // 也参考帧（包）持续 *帧(包)数
+        if(video_duration < 0     // pts回绕
+                || video_duration > video_frame_duration_ * stats_.video_nb_packets * 2) {
+            video_duration =  video_frame_duration_ * stats_.video_nb_packets;
+        }
+#endif
         stats->audio_duration = audio_duration;
         stats->video_duration = video_duration;
+
         // 3 获取音视频包数与其音视频的总字节大小
         stats->audio_nb_packets = stats_.audio_nb_packets;
         stats->video_nb_packets = stats_.audio_nb_packets;
@@ -454,7 +513,7 @@ public:
 private:
     std::mutex mutex_;
     std::condition_variable cond_;
-    std::queue<MyAVPacket *> queue_;
+    std::queue<MyAVPacket *> queue_;                    // queue_可能会残留MyAVPacket，应该要回收一下，到时看看怎么回收比较好
 
     bool abort_request_ = false;
 

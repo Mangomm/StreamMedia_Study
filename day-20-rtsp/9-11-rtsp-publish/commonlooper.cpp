@@ -36,6 +36,7 @@ CommonLooper::~CommonLooper()
 RET_CODE CommonLooper::Start()
 {
     LogInfo("into");
+    // this指的是谁调用该函数的对象，而不是只表示CommonLooper的对象，例如rtsppusher->start()，那么this就是rtsppusher类的对象
     worker_ = new std::thread(trampoline, this);
     if(!worker_) {
         LogError("new std::this_thread failed");

@@ -21,3 +21,15 @@ V1.1.1：
 	后续需要研究一下pushPrivate的打印”LogInfo("video_back_pts_: %lld, video_front_pts_: %lld, stats_.video_nb_packets: %d",video_back_pts_, video_front_pts_, stats_.video_nb_packets);“显示的内容，
 	搞懂求出的队列的duration实际是n-1的时长，而为什么不是n帧的时长。这可能涉及到编码前后打时间戳的内容。
 	研究上面pushPrivate的内容，实际就是研究Drop的"int64_t duration = video_back_pts_ - video_front_pts_;"，这样packetqueue.h队列你就理解透彻了。
+	
+V1.1.2：
+	看完rtsppusher.
+	1）在rtsppusher推流的超时处理并且是windows平台时，会使用到GetTickCount函数，该函数可能会遇到归0问题。
+			后续优化的话：在本程序可能会遇到超时的接口，可以再次调用该接口，以更新一次pre_time_，从而解决这种情况。
+	
+解决的问题：
+	1）解决了V1.1.1的疑问。在debugQueue函数发现，用老师的代码看到获取的stats，队列的包数是0，但是获取到的队列视频或者音频时长仍然是40ms-21ms的打印，
+		说明是不匹配的，或者有可能是统计Push或者Pop统计包数等相关信息不太准确，后期还是需要优化一下；而我的是0，说明应该问题不大。
+		代码已经对Drop、GetAudioDuration、GetVideoDuration、GetStats的duration进行处理了，可以使用宏MyDurationCode去改变，具体看代码。
+	视频可以看回9-11综合优化，大概从15min开始。
+	即：该问题虽然解决，代码用着我的，但是后期还是需要去优化队列的统计相关内容，大概想了一下，应该是在Drop与Pop时，更新video_front_pts_值的时候有点问题，其值应该等于drop掉后的队列的包头pts，而不是等于drop掉的包的pts，需要导师验证，没太大问题后期再优化吧。
