@@ -222,6 +222,7 @@ public:
 
         // wait或者wait_for不带参2与pthread_cond_wait是一样的，但是带参2是不一样的，带参2相当于多了一个忙轮询。
         // 这也就是为啥wait或者wait_for加上参2后，使用if即可；而pthread_cond_wait需要使用while忙轮询去判断是否为空，不能使用if。
+        // 这里的参2指lambda表达式，而非真正的参2延时时间。
         if(queue_.empty()) {
             cond_.wait_for(lock, std::chrono::milliseconds(timeout), [this] {
                 return !queue_.empty() | abort_request_;

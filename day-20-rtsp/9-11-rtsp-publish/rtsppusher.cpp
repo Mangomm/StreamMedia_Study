@@ -32,7 +32,7 @@ static int decode_interrupt_cb(void *ctx)
 }
 
 /**
- * @brief
+ * @brief   设置相关参数，主要是分配AVFormatContext。
  * @param   url_                    推流url。
  *          rtsp_transport_         rtsp的传输方式。
  *          audio_frame_duration_   音频一帧的时长。

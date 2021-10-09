@@ -33,3 +33,15 @@ V1.1.2：
 		代码已经对Drop、GetAudioDuration、GetVideoDuration、GetStats的duration进行处理了，可以使用宏MyDurationCode去改变，具体看代码。
 	视频可以看回9-11综合优化，大概从15min开始。
 	即：该问题虽然解决，代码用着我的，但是后期还是需要去优化队列的统计相关内容，大概想了一下，应该是在Drop与Pop时，更新video_front_pts_值的时候有点问题，其值应该等于drop掉后的队列的包头pts，而不是等于drop掉的包的pts，需要导师验证，没太大问题后期再优化吧。
+
+V1.1.3：
+	看完avpublishtime.h、pushwork的类、main，优化了一下pushwork的析构，都没啥问题。
+	就有一个小疑问：
+	1）是关于调用AVPublishTime::GetInstance()->Rest()记录start_time_时的位置，老师并未说明他放在init编码前的原因。个人感觉放在init中的音视频采集Start前更好。
+
+到该版本，目前该项目的所有代码的看完了，总结需要处理的问题：
+	1）在采集模块时，不是很理解采集时的3种采集时间戳方式(帧间隔、直接系统时间模式、帧间隔+直接系统时间模式)，后续需要看回rtmp的视频去理解。
+	2）处理在公司推流时是花屏的问题。
+	3）V1.1.1版本的问题，即packetqueue队列的问题。
+	4）V1.1.2的问题。
+	5）V1.1.3的问题，这个问题很简单，建议先将花屏解决后，再处理其它问题。

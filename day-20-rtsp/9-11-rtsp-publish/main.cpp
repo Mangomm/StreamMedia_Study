@@ -40,7 +40,9 @@ int main()
     cout << "Hello World!" << endl;
 
     init_logger("rtsp_push.log", S_INFO);
+
     MessageQueue *msg_queue_ = new MessageQueue();
+
     //    for(int i = 0; i < 5; i++)
     {
         //        LogInfo("test pushwork:%d", i);
@@ -54,7 +56,7 @@ int main()
         PushWork push_work(msg_queue_);
         Properties properties;
         // 音频test模式
-        properties.SetProperty("audio_test", 1);                    // 音频测试模式，这个配置应该没啥意义
+        properties.SetProperty("audio_test", 1);                    // 音频测试模式，这个配置应该是为后面切换到不同的播放模式
         properties.SetProperty("input_pcm_name", "buweishui_48000_2_s16le.pcm");
         // 麦克风采样属性(采集部分)
         properties.SetProperty("mic_sample_fmt", AV_SAMPLE_FMT_S16);
@@ -90,11 +92,13 @@ int main()
             LogError("PushWork init failed");
             return -1;
         }
+
         int count = 0;
         AVMessage msg;
         int ret = 0;
-        while (true) {
-//            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        while (true)
+        {
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             ret = msg_queue_->msg_queue_get(&msg, 1000);
             if(1 == ret) {
                 switch (msg.what) {
@@ -114,8 +118,11 @@ int main()
                 break;
             }
         }
+
+
         msg_queue_->msg_queue_abort();
     }
+
     delete msg_queue_;
 
     LogInfo("main finish");
