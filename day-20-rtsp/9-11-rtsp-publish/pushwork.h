@@ -73,6 +73,7 @@ private:
     // dump 数据
     FILE *pcm_s16le_fp_     = NULL;
     FILE *aac_fp_           = NULL;
+    FILE *yuv_fp_           = NULL;
     FILE *h264_fp_          = NULL;
     AVFrame *audio_frame_   = NULL;
 

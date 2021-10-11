@@ -45,6 +45,9 @@ PushWork::~PushWork()
     if(aac_fp_){// 音频采集线程会使用，所以停了采集线程就可以回收这个描述符。
         fclose(aac_fp_);
     }
+    if(yuv_fp_){
+        fclose(yuv_fp_);
+    }
     if(h264_fp_){
         fclose(h264_fp_);// 视频采集线程会使用，所以停了采集线程就可以回收这个描述符。
     }
@@ -365,7 +368,7 @@ void PushWork::PcmCallback(uint8_t *pcm, int32_t size)
     int64_t pts = (int64_t)AVPublishTime::GetInstance()->get_audio_pts();
     int pkt_frame = 0;
     RET_CODE encode_ret = RET_OK;
-    AVPacket *packet = audio_encoder_->Encode(audio_frame_, pts, 0, &pkt_frame, &encode_ret);// 他这里打时间戳是帧间隔+系统时间去打。当误差过大就会使用系统时间
+    AVPacket *packet = audio_encoder_->Encode(audio_frame_, pts, 0, &pkt_frame, &encode_ret);// 他这里打时间戳pts是帧间隔+系统时间去打。当误差过大就会使用系统时间
     // dump编码后的音频数据，方便出问题时排查
     if(encode_ret == RET_OK && packet) {
         if(!aac_fp_) {
@@ -392,7 +395,7 @@ void PushWork::PcmCallback(uint8_t *pcm, int32_t size)
     //    LogInfo("PcmCallback packet->pts: %ld", packet->pts);
         rtsp_pusher_->Push(packet, E_AUDIO_TYPE);
     }else {
-        LogInfo("packet is null");
+        LogInfo("audio_encoder_ packet is null");
     }
 }
 
@@ -405,13 +408,24 @@ void PushWork::PcmCallback(uint8_t *pcm, int32_t size)
 void PushWork::YuvCallback(uint8_t *yuv, int32_t size)
 {
     // yuv视频数据不需要类似音频s16转fltp的做法，直接编码即可。
+    if(!yuv_fp_)
+    {
+        yuv_fp_ = fopen("push_dump.yuv", "wb");
+    }
+    if(yuv_fp_)
+    {
+        // ffplay -f rawvideo -video_size 768x480 push_dump.yuv
+        fwrite(yuv, 1, size, yuv_fp_);
+        fflush(yuv_fp_);// 冲刷文件描述符
+    }
+
 
     // LogInfo("YuvCallback size: %d", size);
     int64_t pts = (int64_t)AVPublishTime::GetInstance()->get_video_pts();
     int pkt_frame = 0;
     RET_CODE encode_ret = RET_OK;
     AVPacket *packet = video_encoder_->Encode(yuv, size, pts,  &pkt_frame, &encode_ret);
-    if(packet) {
+    if(encode_ret == RET_OK && packet) {
         if(!h264_fp_) {
             h264_fp_ = fopen("push_dump.h264", "wb");
             if(!h264_fp_) {
@@ -428,6 +442,8 @@ void PushWork::YuvCallback(uint8_t *yuv, int32_t size)
 
         fwrite(packet->data, 1,  packet->size, h264_fp_);
         fflush(h264_fp_);
+    }else{
+        LogError("============encode_ret: %d, size: %d==============", encode_ret, size);
     }
 
     // 将编码后的视频数据包放进packet_queue队列。并且看到，队列中的音视频包不一定是音频-视频-音频-视频...的顺序存放，它是不确定的，看两个采集线程的读取速度。
@@ -436,6 +452,6 @@ void PushWork::YuvCallback(uint8_t *yuv, int32_t size)
     //    LogInfo("YuvCallback packet->pts: %ld", packet->pts);
         rtsp_pusher_->Push(packet, E_VIDEO_TYPE);
     }else {
-        LogInfo("packet is null");
+        LogInfo("video_encoder_ packet is null");
     }
 }

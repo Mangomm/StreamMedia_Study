@@ -117,6 +117,12 @@ int H264Encoder::Init(const Properties &properties)
         int sps_len = 0;
         uint8_t *pps = NULL;
         int pps_len = 0;
+
+        for(int i = 0; i < ctx_->extradata_size; i++){
+            printf("%#X ", ctx_->extradata[i]);
+        }
+        printf("\n");
+
         // 寻找pps的数据位置
         uint8_t *data = ctx_->extradata + 4;
         for (int i = 0; i < ctx_->extradata_size - 4; ++i)
@@ -164,11 +170,14 @@ AVPacket *H264Encoder::Encode(uint8_t *yuv, int size, int64_t pts, int *pkt_fram
 
     // 发送帧去编码
     if(yuv) {
+
         int need_size = 0;
         /* 依据src，开辟对应的缓存到data数组，成功返回src需要的大小，失败返回负数 */
         need_size = av_image_fill_arrays(frame_->data, frame_->linesize, yuv,
                                          (AVPixelFormat)frame_->format,
-                                         frame_->width, frame_->height, 1);
+                                         frame_->width, frame_->height, 1);// 视频不能使用0默认对齐，必须使用1字节对齐，否则ffplay播放看不到画面。会报出下面的错误：
+        // Could not find codec parameters for stream 0 (Video: h264, none): unspecified size Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+
         if(need_size != size)  {// 不等于直接返回错误
             LogError("need_size:%d != size:%d", need_size, size);
             *ret = RET_FAIL;
@@ -185,7 +194,7 @@ AVPacket *H264Encoder::Encode(uint8_t *yuv, int size, int64_t pts, int *pkt_fram
     if(ret1 < 0) {  // <0 不能正常处理该frame
         char buf[1024] = { 0 };
         av_strerror(ret1, buf, sizeof(buf) - 1);
-        LogError("avcodec_send_frame failed: %s", buf);
+        LogError("H264Encoder avcodec_send_frame failed: %s", buf);
         *pkt_frame = 1;
         if(ret1 == AVERROR(EAGAIN)) {               // 你赶紧读取packet，我frame send不进去了
             *ret = RET_ERR_EAGAIN;
@@ -203,7 +212,7 @@ AVPacket *H264Encoder::Encode(uint8_t *yuv, int size, int64_t pts, int *pkt_fram
     AVPacket *packet = av_packet_alloc();
     ret1 = avcodec_receive_packet(ctx_, packet);
     if(ret1 < 0) {
-        LogError("AAC: avcodec_receive_packet ret:%d", ret1);
+        LogError("H264Encoder avcodec_receive_packet ret: %d", ret1);
         av_packet_free(&packet);
         *pkt_frame = 0;
         if(ret1 == AVERROR(EAGAIN)) {               // 需要继续发送frame我们才有packet读取

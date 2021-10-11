@@ -12,7 +12,9 @@ extern "C" {
 }
 
 /*
- * flv解码成yuv并指定分辨率： ffmpeg.exe -i source.200kbps.768x320.flv -vcodec rawvideo -acodec rawaudio -pix_fmt yuv420p -s 768x480 720x480_25fps_420p.yuv
+ * flv解码成yuv并指定分辨率：
+ *      ffmpeg.exe -i source.200kbps.768x320.flv -vcodec rawvideo -acodec rawaudio -pix_fmt yuv420p -s 768x480 720x480_25fps_420p.yuv
+ *  或者 ffmpeg -i test_1280x720.flv -t 5 -r 25 -pix_fmt yuv420p yuv420p_1280x720.yuv
  *
  * 去掉音频: ffmpeg.exe -i source.200kbps.768x320.flv -vcodec rawvideo -an -pix_fmt yuv420p -s 768x480 720x480_25fps_420p.yuv
  * 去掉视频：ffmpeg.exe -i source.200kbps.768x320.flv -vn -f s16le -ar 48000 -ac 2 buweishui_48000_2_s16le.pcm
@@ -70,10 +72,12 @@ int main()
         //视频test模式
         properties.SetProperty("video_test", 1);
         properties.SetProperty("input_yuv_name", "720x480_25fps_420p.yuv");
+        //properties.SetProperty("input_yuv_name", "yuv420p_1280x720.yuv");
+        //properties.SetProperty("input_yuv_name", "test-cmd.yuv");//1280x720
         // 桌面录制属性(采集部分)
         properties.SetProperty("desktop_x", 0);
         properties.SetProperty("desktop_y", 0);
-        properties.SetProperty("desktop_width", 720);               // 测试模式时和yuv文件的宽度一致
+        properties.SetProperty("desktop_width", 768);               // 测试模式时和yuv文件的宽度一致，记住本测试文件是768，而不是720
         properties.SetProperty("desktop_height", 480);              // 测试模式时和yuv文件的高度一致
         // properties.SetProperty("desktop_pixel_format", AV_PIX_FMT_YUV420P);
         properties.SetProperty("desktop_fps", 25);                  // 测试模式时和yuv文件的帧率一致
@@ -84,7 +88,7 @@ int main()
         //1.url
         //2.udp
         properties.SetProperty("rtsp_url", RTSP_URL);
-        properties.SetProperty("rtsp_transport", "udp");            // udp or tcp
+        properties.SetProperty("rtsp_transport", "tcp");            // udp or tcp
         properties.SetProperty("rtsp_timeout", 5000);               // connect server timeout
         properties.SetProperty("rtsp_max_queue_duration", 1000);
 
