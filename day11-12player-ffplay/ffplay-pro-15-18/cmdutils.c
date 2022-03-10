@@ -67,7 +67,7 @@
 #endif
 
 static int init_report(const char *env);
-
+// 这5个都是全局的字典
 AVDictionary *sws_dict;
 AVDictionary *swr_opts;
 AVDictionary *format_opts, *codec_opts, *resample_opts;
@@ -101,27 +101,49 @@ void log_callback_help(void *ptr, int level, const char *fmt, va_list vl)
     vfprintf(stdout, fmt, vl);
 }
 
+/**
+ * @brief ffplay报告日志的回调函数，一旦有调用到av_log的地方，该回调就会被触发，进行写入报告文件report_file。
+ *
+ * @param ptr 一个万能指针，由FFmpeg自己传入处理，不过debug看到一般都是NULL值。
+ * @param level 日志水平，即调用av_log时的参数2，例如AV_LOG_FATAL，值是8，32是AV_LOG_INFO。
+ * @param fmt av_log的参3，格式化列表，例如"Invalid %s specification for %s: %s\n"。
+ * @param vl 实参的参数列表，例如is_duration ? "duration" : "date", context, timestr。
+ *      下面是上面举例的完整语句：
+        av_log(NULL, AV_LOG_FATAL, "Invalid %s specification for %s: %s\n", is_duration ? "duration" : "date", context, timestr);
+
+ * @return void。
+ */
 static void log_callback_report(void *ptr, int level, const char *fmt, va_list vl)
 {
     va_list vl2;
     char line[1024];
     static int print_prefix = 1;
+    //static int print_prefix = 0;//改成0在日志文件，看前缀好像并未看到太大的区别
 
+    // 关于av_log_default_callback、av_log_format_line可以不必太深入研究。
     va_copy(vl2, vl);
     av_log_default_callback(ptr, level, fmt, vl);
-    av_log_format_line(ptr, level, fmt, vl2, line, sizeof(line), &print_prefix);
+    av_log_format_line(ptr, level, fmt, vl2, line, sizeof(line), &print_prefix);    // 将日志信息保存到line数组中。
     va_end(vl2);
+
+    // 只有level小于报告水平才会被写入到文件，FFmpeg在非负数情况下，level越小，信息越重要。
     if (report_file_level >= level) {
-        fputs(line, report_file);
+        fputs(line, report_file);// line写入文件，但实际是写到文件缓冲区，还需要调用fflush才能确保每次写入到文件。
         fflush(report_file);
     }
 }
 
+/**
+ * 程序开头先设置动态库的搜索路径，将当前路径去除(SetDllDirectory函数传空字符串即可)，不做为dll的搜索路径，
+ * 防止由于windows下的DLL搜索路径顺序缺陷造成的DLL劫持问题。
+ */
 void init_dynload(void)
 {
 #ifdef _WIN32
     /* Calling SetDllDirectory with the empty string (but not NULL) removes the
      * current working directory from the DLL search path as a security pre-caution. */
+    // 意思是防止由于windows下的DLL搜索路径顺序造成的DLL劫持问题。
+    // 具体看 https://blog.csdn.net/magictong/article/details/6931520。
     SetDllDirectory("");
 #endif
 }
@@ -162,6 +184,13 @@ double parse_number_or_die(const char *context, const char *numstr, int type,
     return 0;
 }
 
+/**
+ * @brief 将timestr时间格式字符串 转成 对应的微秒。
+ * @param context key，例如"ss"。
+ * @param timestr 时间，格式为"hh:mm:ss"，例如"00:00:30"。
+ * @param is_duration Duration标志，它告诉如何解释timestr，如果timestr不是0则解释为持续时间，否则解释为日期，所以一般传1表示日期。
+ * @return 返回对应的微秒。
+ */
 int64_t parse_time_or_die(const char *context, const char *timestr,
                           int is_duration)
 {
@@ -215,14 +244,25 @@ void show_help_children(const AVClass *class, int flags)
         show_help_children(child, flags);
 }
 
+/**
+ * @brief 将用户输入的选项与OptionDef数组比较，看是否支持该选项。
+ * @param po FFmpeg支持的选项。
+ * @param name 用户输入的选项。
+ * @return 若用户的选项被找到，则返回单个OptionDef对象，没找到while去到末尾是返回空的变量OptionDef，注并不是空值，而是将该变量置为空，是有内存的。
+ */
 static const OptionDef *find_option(const OptionDef *po, const char *name)
 {
+    // strchr()：在字符串str中寻找字符C第一次出现的位置，并返回其位置（地址指针而不是下标），若失败则返回NULL. 例如"hello",找e则返回e的指针，打印出来的话就是"ello"
+    // 寻找":"，若找到则说明用户使用冒号的形式进行赋值，选项名字是在":"之前，例如"x:100"，那么选项名字是x，长度是0x1-0x0=1(地址是按照1字节进行递增的)。
     const char *p = strchr(name, ':');
     int len = p ? p - name : strlen(name);
 
+    // 确认用户输入的选项名字后，在OptionDef匹配是否支持该选项。
     while (po->name) {
-        if (!strncmp(name, po->name, len) && strlen(po->name) == len)
+        // 与上strlen(po->name) == len是因为：例如name是"aa"，po->name是"aac"，那么不与的话，也是满足if，但选项却不完全一样，所以必须加上&&
+        if (!strncmp(name, po->name, len) && strlen(po->name) == len){
             break;
+        }
         po++;
     }
     return po;
@@ -347,21 +387,36 @@ static int write_option(void *optctx, const OptionDef *po, const char *opt,
     return 0;
 }
 
+/**
+ * @brief 。
+ * @param optctx 参数上下文，一般传NULL即可。
+ * @param argc 参数key。
+ * @param argv 参数value。
+ * @param options FFmpeg支持的参数选项，静态数组，类型是OptionDef。
+ * @return
+ */
 int parse_option(void *optctx, const char *opt, const char *arg,
                  const OptionDef *options)
 {
     const OptionDef *po;
     int ret;
 
+    // 1. 判断用户的参数是否在选项数组options中，以此标记arg的值。
     po = find_option(options, opt);
+    // 1.1 如果没找到并且选项遇到no，则跳过再次寻找。例如"-noi"
     if (!po->name && opt[0] == 'n' && opt[1] == 'o') {
         /* handle 'no' bool option */
         po = find_option(options, opt + 2);
-        if ((po->name && (po->flags & OPT_BOOL)))
+        // 1.2 找到并且是布尔型，arg标志为0。
+        if ((po->name && (po->flags & OPT_BOOL)))// OPT_BOOL指：OptionDef的共用体是一个布尔型变量，由于C没有布尔型，所以使用int代替。
             arg = "0";
-    } else if (po->flags & OPT_BOOL)
+    } // 1.3 找到并且共用体是布尔型(例如-i)，标志为1.
+      // 注：没找到并且共用体是布尔型(例如-moi)应该是不会进来的，因为不满足flags是OPT_BOOL，
+      //      此时flags应该是0，因为数组最末尾的变量被置为NULL了，相当于初始化。例如在命令行随机添加个不存在的选项即可
+    else if (po->flags & OPT_BOOL)
         arg = "1";
 
+    // 1.4 确认没找到的话，则按默认值"default"去找
     if (!po->name)
         po = find_option(options, "default");
     if (!po->name) {
@@ -380,33 +435,44 @@ int parse_option(void *optctx, const char *opt, const char *arg,
     return !!(po->flags & HAS_ARG);
 }
 
+/**
+ * @brief 。
+ * @param optctx 参数上下文，一般传NULL即可。
+ * @param argc 参数个数。
+ * @param argv 参数列表。
+ * @param options FFmpeg支持的参数选项，静态数组。
+ * @param parse_arg_function 解析参数函数，即opt_input_file。
+ * @return void。
+ *
+ * 例如调用本函数：parse_options(NULL, argc, argv, options, opt_input_file);
+ */
 void parse_options(void *optctx, int argc, char **argv, const OptionDef *options,
                    void (*parse_arg_function)(void *, const char*))
 {
     const char *opt;
     int optindex, handleoptions = 1, ret;
 
-    /* perform system-dependent conversions for arguments list */
+    /* perform system-dependent conversions for arguments list(对参数列表执行系统依赖的转换)，了解一下即可。 */
     prepare_app_arguments(&argc, &argv);
 
     /* parse options */
     optindex = 1;
-    while (optindex < argc) {
+    while (optindex < argc) {// 保证除了程序本身，至少有一个选项
         opt = argv[optindex++];
 
         if (handleoptions && opt[0] == '-' && opt[1] != '\0') {
-            if (opt[1] == '-' && opt[2] == '\0') {
+            if (opt[1] == '-' && opt[2] == '\0') {// 这种情况："--x"
                 handleoptions = 0;
                 continue;
             }
-            opt++;
+            opt++;// 指向后一字符，例如opt="-noi"，opt++后，opt="noi"
 
             if ((ret = parse_option(optctx, opt, argv[optindex], options)) < 0)
                 exit_program(1);
             optindex += ret;
         } else {
             if (parse_arg_function)
-                parse_arg_function(optctx, opt);
+                parse_arg_function(optctx, opt);    // opt_input_file回调，赋值给静态变量input_filename。
         }
     }
 }
@@ -444,6 +510,18 @@ int parse_optgroup(void *optctx, OptionGroup *g)
     return 0;
 }
 
+/**
+ * @brief 不管输入参数在FFmpeg是否支持，只要我要找的内容在用户输入有这个参数，那我就返回这个下标。
+ * @param argc 参数个数。
+ * @param argv 参数列表。
+ * @param options FFmpeg支持的参数选项，静态数组。
+ * @param optname 要寻找的参数。
+ * @return 找到下标则返回对应下标，找不到则返回0.
+ * 可以通过命令增加删减选项去debug该函数：
+ *  -noi rtsp://admin:runone2016@192.168.1.186:554/Streaming/Channels/1 -tyy -loglevel 8 -fflags nobuffer -x 720 -y 480
+ *
+ * 实际上本函数不一定非得按照FFmpeg的做法，可以按照自己的实际需求进行修改。
+ */
 int locate_option(int argc, char **argv, const OptionDef *options,
                   const char *optname)
 {
@@ -452,37 +530,64 @@ int locate_option(int argc, char **argv, const OptionDef *options,
 
     for (i = 1; i < argc; i++) {
         const char *cur_opt = argv[i];
-
-        if (*cur_opt++ != '-')
+        printf("i: %d\n", i);
+        if (*cur_opt++ != '-')      // 这里会一直过滤空格，直至找到"-"，例如命令：ffplay.exe -i a.mp4，跳过argv[0]，那么就从参数-i开始判断if，找到后，cur_opt指向选项的首个字符。
             continue;
 
+        // 1. 判断每个参数是否被FFmpeg支持. 将optname="v"代进来，命令行不带"v"选项，那么肯定不满足2的if条件，不返回下标i。
         po = find_option(options, cur_opt);
-        if (!po->name && cur_opt[0] == 'n' && cur_opt[1] == 'o')
+        if (!po->name && cur_opt[0] == 'n' && cur_opt[1] == 'o')    // 这里的if意思是：若遇到选项以no开头的，则跳过no再次查找选项。例如添加选项-noi，同样是当成-i选项
             po = find_option(options, cur_opt + 2);
 
-        if ((!po->name && !strcmp(cur_opt, optname)) ||
-             (po->name && !strcmp(optname, po->name)))
+        // 2. 根据optname，匹配用户输入的参数的下标，若用户输入了optname参数，则返回对应的下标。
+        // 1）如果po->name是空并且要找的选项等于用户输入的参数，那么返回用户输入参数的下标。
+        //      即意思是：FFmpeg不支持的选项(!po->name的意思)，但是我要找的选项名字在用户输入的参数中找到了。
+        // 2）或者po->name不是空并且要找的选项等于po->name，那么同样返回用户输入参数的下标。
+        //      即意思是：用户输入的参数在FFmpeg支持的选项，并且要找的选项名字在用户输入的参数中找到了，此时cur_opt、po->name是一样的。
+        // 理解关键和总结：
+        //      1. 用户参数不在po的情况下，以用户输入参数判断并返回下标；用户参数在po的情况下，优先以po->name判断并返回下标，实际找到的时候cur_opt、po->name是一样的。
+        //      2. cur_opt是用户输入的参数列表；po->name是FFmpeg支持的参数列表；optname是我们要寻找的参数名字。
+        //      3. 感觉这个if有点别扭难理解，目的应该就是根据optname寻找用户输出参数的下标。
+        //      4. 最好的解释是：不管输入参数在FFmpeg是否支持，只要我要找的内容在用户输入有这个参数，那我就返回这个下标。
+        // 测试(!po->name && !strcmp(cur_opt, optname))：在parse_loglevel函数添加testidx那行的代码，然后命令行添加-tyy即可满足，这个条件感觉可以让程序支持自定义的参数选项。
+        // 测试(po->name && !strcmp(optname, po->name))：例如我要寻找的optname是loglevel，那我在命令行添加-loglevel 8即可满足测试。
+        if ((!po->name && !strcmp(cur_opt, optname)) || (po->name && !strcmp(optname, po->name)))
             return i;
 
+        // 3. 没找到对应的po也会++，他应该默认按照当有非法参数时，非法参数的形式是选项+值的方式，例如：-abc 1。
+        // po->flags & HAS_ARG代表：若选项是有参数的，则跳过该参数，例如-x 10，则会跳过10这个选项。
         if (!po->name || po->flags & HAS_ARG)
             i++;
     }
     return 0;
 }
 
+/**
+ * @brief 就是dump参数，没什么参考意义。
+ * @param a 用户输入的参数列表的其中一个参数。
+ * @return void。
+ */
 static void dump_argument(const char *a)
 {
     const unsigned char *p;
 
+    // 1. 检测输入的参数的每个字符串是否是合法字符。合法的有：43-58；64-90；95；97-122。其余都是非法字符，直接退出for。
+    // 所以遇到"\"反斜杠值是92，for就会停止。
     for (p = a; *p; p++)
         if (!((*p >= '+' && *p <= ':') || (*p >= '@' && *p <= 'Z') ||
               *p == '_' || (*p >= 'a' && *p <= 'z')))
             break;
+
+    // 2. 判断p是否是因为遇到空而退出，若是直接写入a后返回即可。但是p此时指向反斜杠，p不是空，所以不会进入。
+    // 例如此时p="\Users\DELL\Desktop\StreamMedia_Study\day11-12player-ffplay\build-ffplay-pro-Desktop_Qt_5_10_1_Min"
     if (!*p) {
         fputs(a, report_file);
         return;
     }
-    fputc('"', report_file);
+
+    fputc('"', report_file);    // 先写入"双引号的一个引号。
+
+    // 3. 开始dump参数。
     for (p = a; *p; p++) {
         if (*p == '\\' || *p == '"' || *p == '$' || *p == '`')
             fprintf(report_file, "\\%c", *p);
@@ -491,9 +596,25 @@ static void dump_argument(const char *a)
         else
             fputc(*p, report_file);
     }
-    fputc('"', report_file);
+
+    fputc('"', report_file);    // 最后写入另一个双引号。
 }
 
+/**
+ * @brief 大概就是检查OptionDef数组是否带有OPT_PERFILE选项，
+ *          若带有该选项，则必须同时包含(OPT_INPUT | OPT_OUTPUT)，否则断言。
+ *          关于OPT_PERFILE的具体意思，后面可以再看看。
+ * @param po FFmpeg支持的参数选项，静态数组。
+ * @return void。
+ *
+ * #define av_assert0(cond) do {                                        \
+    if (!(cond)) {                                                      \
+        av_log(NULL, AV_LOG_PANIC, "Assertion %s failed at %s:%d\n",    \
+               AV_STRINGIFY(cond), __FILE__, __LINE__);                 \
+        abort();                                                        \
+    }                                                                   \
+} while (0)
+ */
 static void check_options(const OptionDef *po)
 {
     while (po->name) {
@@ -503,20 +624,45 @@ static void check_options(const OptionDef *po)
     }
 }
 
+/**
+ * @brief 解析日志相关以及控制控制台开始时输出内容多少的函数。
+ * @param argc 参数个数。
+ * @param argv 参数列表。
+ * @param options FFmpeg支持的参数选项，静态数组。
+ * @return void。
+ */
 void parse_loglevel(int argc, char **argv, const OptionDef *options)
 {
+    //int testidx = locate_option(argc, argv, options, "tyy");// tyy代码，用于测试
+    // 1. 找到loglevel在用户输入的参数列表中的下标。
     int idx = locate_option(argc, argv, options, "loglevel");
     const char *env;
 
+    // 检查OptionDef数组是否带有OPT_PERFILE选项
     check_options(options);
 
-    if (!idx)
+    // 2. 如果在用户输入的参数没找到loglevel参数，则判断用户是否输入了日志"v"的缩写参数。
+    // 注意，虽然在OptionDef数组带有"v"，缩写，但是用户参数不输入"v"，返回依然是0，不要被误解了(see locate_option函数)。
+    // locate_option会根据参4在用户与OptionDef数组进行查找是否含该参数，找到就返回下标。
+    // 这段代码可以使用-noi a.mp4 -x 720 -y 480测试，即不带loglevel、v选项即可。
+    if (!idx){
         idx = locate_option(argc, argv, options, "v");
-    if (idx && argv[idx + 1])
+    }
+
+    // 3. 如果找到loglevel或者v参数，则设置日志水平。
+    if (idx && argv[idx + 1]){
         opt_loglevel(NULL, "loglevel", argv[idx + 1]);
+    }
+
+    // 4. 如果用户输入了report参数或者存在FFREPORT环境变量，则初始化报告，可以通过在命令行添加"-report"选项即可，
+    // 不加参数，设置FFREPORT环境变量效果一样。在构建目录生成对应的xxx.log，是控制台的打印信息。
+    // getenv：想要获取的环境变量名。调用成功返回指向 value 的指针，失败返回 NULL。
     idx = locate_option(argc, argv, options, "report");
     if ((env = getenv("FFREPORT")) || idx) {
+
         init_report(env);
+
+        // 这里是dump一下参数，在控制台和报告的日志可以看到打印。
         if (report_file) {
             int i;
             fprintf(report_file, "Command line:\n");
@@ -526,7 +672,11 @@ void parse_loglevel(int argc, char **argv, const OptionDef *options)
             }
             fflush(report_file);
         }
+
     }
+
+    // 5. 查找用户是否输入hide_banner参数，有则将全局变量hide_banner置1.
+    // 若带了-hide_banner参数(不用值)，则在show_banner不会显示对应的版权、配置、动态库版本信息。
     idx = locate_option(argc, argv, options, "hide_banner");
     if (idx)
         hide_banner = 1;
@@ -575,6 +725,7 @@ int opt_default(void *optctx, const char *opt, const char *arg)
     }
     if ((o = opt_find(&fc, opt, NULL, 0,
                          AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ))) {
+        int tyycodeFlags = FLAGS;// 该条目的类型，nobuffer时为0
         av_dict_set(&format_opts, opt, arg, FLAGS);
         if (consumed)
             av_log(NULL, AV_LOG_VERBOSE, "Routing option %s to both codec and muxer layer\n", opt);
@@ -868,36 +1019,45 @@ int opt_cpuflags(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
+/**
+ * @brief 对日志水平获取和设置的函数，简单了解一下即可。例如传参：NULL, "loglevel", argv[idx + 1]。 argv[idx + 1]是数值，例如8.
+ * @param optctx 选项上下文，一般传参即可。
+ * @param opt   日志选项，例如"loglevel"。
+ * @param arg   日志水平，例如+8或者-8或者8。
+ * @return  no mean。
+ */
 int opt_loglevel(void *optctx, const char *opt, const char *arg)
 {
     const struct { const char *name; int level; } log_levels[] = {
-        { "quiet"  , AV_LOG_QUIET   },
-        { "panic"  , AV_LOG_PANIC   },
+        { "quiet"  , AV_LOG_QUIET   },          // 平静的
+        { "panic"  , AV_LOG_PANIC   },          // 恐慌的
         { "fatal"  , AV_LOG_FATAL   },
         { "error"  , AV_LOG_ERROR   },
         { "warning", AV_LOG_WARNING },
         { "info"   , AV_LOG_INFO    },
-        { "verbose", AV_LOG_VERBOSE },
+        { "verbose", AV_LOG_VERBOSE },          // 详细的
         { "debug"  , AV_LOG_DEBUG   },
-        { "trace"  , AV_LOG_TRACE   },
+        { "trace"  , AV_LOG_TRACE   },          // 跟踪
     };
     const char *token;
     char *tail;
-    int flags = av_log_get_flags();
-    int level = av_log_get_level();
+    int flags = av_log_get_flags();// 日志标志，可能是 AV_LOG_SKIP_REPEATED 或者 AV_LOG_PRINT_LEVEL，程序开头设置了。
+    int level = av_log_get_level();// 获取当前日志水平。
     int cmd, i = 0;
 
-    av_assert0(arg);
+    av_assert0(arg);                // 断言，arg不能是空
     while (*arg) {
-        token = arg;
-        if (*token == '+' || *token == '-') {
+        token = arg;                // 临时操作arg的指针
+        if (*token == '+' || *token == '-') {// 支持正负号的输入，若用户输入正负号，cmd不为空
             cmd = *token++;
         } else {
             cmd = 0;
         }
+
         if (!i && !cmd) {
-            flags = 0;  /* missing relative prefix, build absolute value */
+            flags = 0;  /* missing relative prefix, build absolute value(用户没有传入正负号的前缀，重置flags) */
         }
+
         if (!strncmp(token, "repeat", 6)) {
             if (cmd == '-') {
                 flags |= AV_LOG_SKIP_REPEATED;
@@ -917,12 +1077,13 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg)
         }
         i++;
     }
+
     if (!*arg) {
         goto end;
-    } else if (*arg == '+') {
+    } else if (*arg == '+') {// 跳过正负号，拿到数字
         arg++;
     } else if (!i) {
-        flags = av_log_get_flags();  /* level value without prefix, reset flags */
+        flags = av_log_get_flags();  /* level value without prefix, reset flags(如果水平没有正负号的前缀，重置flags) */
     }
 
     for (i = 0; i < FF_ARRAY_ELEMS(log_levels); i++) {
@@ -947,6 +1108,16 @@ end:
     return 0;
 }
 
+/**
+ * @brief 按照template的格式组成对应的字符串，保存在bp->str中。
+ *
+ * @param bp 一个字符串缓存区，可以认为类似C++的string或者当做一个自动改变大小的buffer数组即可。
+ * @param template 文件名的模板，例如"%p-%t.log"，配合参数tm，处理后会变成"ffplay-20211028-105917.log"。
+ * @param tm 获取的当前时间。
+ * @return void。
+ *
+ * 以参2 = "%p-%t.log"为例理解该函数即可。
+*/
 static void expand_filename_template(AVBPrint *bp, const char *template,
                                      struct tm *tm)
 {
@@ -954,27 +1125,35 @@ static void expand_filename_template(AVBPrint *bp, const char *template,
 
     while ((c = *(template++))) {
         if (c == '%') {
-            if (!(c = *(template++)))
+            if (!(c = *(template++)))// 如果%的下一个字符为空，则break
                 break;
             switch (c) {
             case 'p':
+                // 往输出缓冲区bp添加"ffplay"，program_name在ffplay.c中被赋值了。此时bp->str="ffplay"
                 av_bprintf(bp, "%s", program_name);
                 break;
             case 't':
                 av_bprintf(bp, "%04d%02d%02d-%02d%02d%02d",
                            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                           tm->tm_hour, tm->tm_min, tm->tm_sec);
+                           tm->tm_hour, tm->tm_min, tm->tm_sec);// 此时bp->str="ffplay-20211028-154930"
                 break;
             case '%':
                 av_bprint_chars(bp, c, 1);
                 break;
             }
         } else {
+            // 这里的逻辑一般是对应%以及%后一个字符以外的字符，以"%p-%t.log"为例。第一次进入时：bp->str="ffplay-"
+            // 后面执行完所以的%后，剩下".log"都会执行这里的逻辑，最后处理会变成"ffplay-20211028-105917.log"。
             av_bprint_chars(bp, c, 1);
         }
     }
 }
 
+/**
+ * @brief 对FFmpeg报告文件的处理，即在控制台的输出的内容保存到日志文件中。
+ * @param env 查找到"FFREPORT"的环境变量value值或者用户输入参数"-report"的value值。
+ * @return 0 成功 负数 失败。
+ */
 static int init_report(const char *env)
 {
     char *filename_template = NULL;
@@ -984,12 +1163,15 @@ static int init_report(const char *env)
     struct tm *tm;
     AVBPrint filename;
 
+    // 1. 报告文件已经打开则返回0. report_file是一个全局静态的文件变量。
     if (report_file) /* already opened */
         return 0;
+
     time(&now);
     tm = localtime(&now);
 
     while (env && *env) {
+        // 这里的if应该是提取-report输入时的参数，应该支持多个参数(例如下面的file、level)，这里就不测试了。
         if ((ret = av_opt_get_key_value(&env, "=", ":", 0, &key, &val)) < 0) {
             if (count)
                 av_log(NULL, AV_LOG_ERROR,
@@ -997,19 +1179,25 @@ static int init_report(const char *env)
                        av_err2str(ret));
             break;
         }
-        if (*env)
+
+        if (*env){
             env++;
+        }
+
         count++;
         if (!strcmp(key, "file")) {
-            av_free(filename_template);
+            av_free(filename_template);// av_free释放NULL指针也是安全的。
             filename_template = val;
             val = NULL;
         } else if (!strcmp(key, "level")) {
             char *tail;
+            // report_file_level全局变量，指报告文件的日志水平，默认debug。
+            // strtol函数在数据库连接池使用过，它有很多类似的函数，不算难。参1是传入字符串，参2是参3设置好后，参1的非法字符串，一般不关心都是置NULL。参3是2-36进制的范围。
+            // 返回值是遇到非法字符串前的合法字符的值。  具体可以看https://blog.csdn.net/zxx2096/article/details/81127858的例子，很简单。
             report_file_level = strtol(val, &tail, 10);
-            if (*tail) {
+            if (*tail) {// tail不为空说明有非法字符串。
                 av_log(NULL, AV_LOG_FATAL, "Invalid report file level\n");
-                exit_program(1);
+                exit_program(1);// 执行预先注册的退出函数，没有注册则调用exit()。
             }
         } else {
             av_log(NULL, AV_LOG_ERROR, "Unknown key '%s' in FFREPORT\n", key);
@@ -1018,10 +1206,17 @@ static int init_report(const char *env)
         av_free(key);
     }
 
+    // 初始化AVBPrint，参2设置打印缓冲大小是0，但是参3可以自动根据需要，重新开辟buffer。具体看FFmpeg的函数注释。
     av_bprint_init(&filename, 0, AV_BPRINT_SIZE_AUTOMATIC);
-    expand_filename_template(&filename,
-                             av_x_if_null(filename_template, "%p-%t.log"), tm);
+    // 将"%p-%t.log"展开成对应的字符串，保存在filename->str中。
+    expand_filename_template(&filename, av_x_if_null(filename_template, "%p-%t.log"), tm);
     av_free(filename_template);
+
+    /*
+     * 测试打印缓冲区是否完整(未被截断)。
+     * 可能由于内存分配失败而被截断或size_max限制(如果需要比较size和size_max)。
+     * true:代表开辟的内存>字符串大小，是正常的。 false：表示开辟的内存不足以存放str文件名，需要报错。
+    */
     if (!av_bprint_is_complete(&filename)) {
         av_log(NULL, AV_LOG_ERROR, "Out of memory building report file name\n");
         return AVERROR(ENOMEM);
@@ -1034,6 +1229,8 @@ static int init_report(const char *env)
                filename.str, strerror(errno));
         return ret;
     }
+
+    // 设置日志回调，通过日志回调将日志写入到报告文件中。回调函数要求是多线程安全的，即使本身不是多线程，但是编解码时是多线程的。
     av_log_set_callback(log_callback_report);
     av_log(NULL, AV_LOG_INFO,
            "%s started on %04d-%02d-%02d at %02d:%02d:%02d\n"
@@ -1042,7 +1239,11 @@ static int init_report(const char *env)
            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
            tm->tm_hour, tm->tm_min, tm->tm_sec,
            filename.str);
+
+    // 通过debug发现，av_bprint_finalize的作用是将AVBPrint.size多余的内存释放掉，变成实际长度+0的长度，例如文件长26字节，size原本开辟1008长度，执行完后，size变成27(26+1)。
+    // av_bprint_finalize参2：如果不是NULL，用于返回缓冲区内容，如果内存分配失败，则为NULL;如果为NULL，缓冲区将被丢弃并释放，这里传NULL即可。
     av_bprint_finalize(&filename, NULL);
+
     return 0;
 }
 
@@ -1177,12 +1378,20 @@ static void print_buildconf(int flags, int level)
     }
 }
 
+/**
+ * @brief 在控制台输出对应的版权、配置、动态库版本信息。可以通过命令行输入 -hide_banner 隐藏。
+ * @param argc 参数个数。
+ * @param argv 参数列表。
+ * @param options FFmpeg支持的参数选项，静态数组。
+ * @return void。
+ */
 void show_banner(int argc, char **argv, const OptionDef *options)
 {
     int idx = locate_option(argc, argv, options, "version");
     if (hide_banner || idx)
         return;
 
+    // 显示对应的版权、配置、动态库版本信息。可以通过命令行输入 -hide_banner 隐藏。
     print_program_info (INDENT|SHOW_COPYRIGHT, AV_LOG_INFO);
     print_all_libs_info(INDENT|SHOW_CONFIG,  AV_LOG_INFO);
     print_all_libs_info(INDENT|SHOW_VERSION, AV_LOG_INFO);
@@ -2075,20 +2284,37 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec)
     return ret;
 }
 
+/**
+ * @brief 先不管。
+ * @param opts 字典。
+ * @param codec_id 编解码器id。例如h264、h265、vp8、aac等等。
+ * @param s 输入上下文。
+ * @param st 对应的流，可能是视频流、音频流、字幕流等等。
+ * @param codec 编解码器。
+ * @return 先不管。
+ *
+ * 调用：filter_codec_opts(codec_opts, s->streams[i]->codecpar->codec_id, s, s->streams[i], NULL);
+ */
 AVDictionary *filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
                                 AVFormatContext *s, AVStream *st, AVCodec *codec)
 {
     AVDictionary    *ret = NULL;
     AVDictionaryEntry *t = NULL;
+
+    // 1. 判断是编码还是解码，s->oformat=NULL代表解码，说明不用编码进行输出。
     int            flags = s->oformat ? AV_OPT_FLAG_ENCODING_PARAM
                                       : AV_OPT_FLAG_DECODING_PARAM;
     char          prefix = 0;
+
+    // 2. 获取AVCodecContext的AVClass。它可以与AV_OPT_SEARCH_FAKE_OBJ结合使用，用于检查选项
     const AVClass    *cc = avcodec_get_class();
 
+    // 3. 如果编解码器传进来是一个空值，自动根据codec_id再次寻找
     if (!codec)
         codec            = s->oformat ? avcodec_find_encoder(codec_id)
                                       : avcodec_find_decoder(codec_id);
 
+    // 4. 判断是哪一种流，进行标记flags。
     switch (st->codecpar->codec_type) {
     case AVMEDIA_TYPE_VIDEO:
         prefix  = 'v';
@@ -2104,6 +2330,7 @@ AVDictionary *filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
         break;
     }
 
+    // 5. 处理，由于一般t返回空，不进while循环，所以目前暂不分析while内部
     while (t = av_dict_get(opts, "", t, AV_DICT_IGNORE_SUFFIX)) {
         char *p = strchr(t->key, ':');
 
@@ -2129,26 +2356,40 @@ AVDictionary *filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
         if (p)
             *p = ':';
     }
+
     return ret;
 }
 
+/**
+ * @brief 先不管。
+ * @param s 输入的上下文。
+ * @param codec_opts 字典选项，例如传入的是全局的编解码器选项。
+ * @return 先不管。
+ */
 AVDictionary **setup_find_stream_info_opts(AVFormatContext *s,
                                            AVDictionary *codec_opts)
 {
     int i;
     AVDictionary **opts;
 
+    // 1. 没有可用的流直接返回
     if (!s->nb_streams)
         return NULL;
+
+    // 2. 开辟多个AVDictionary *类型的指针，保存在二级指针opts中。
     opts = av_mallocz_array(s->nb_streams, sizeof(*opts));
     if (!opts) {
         av_log(NULL, AV_LOG_ERROR,
                "Could not alloc memory for stream options.\n");
         return NULL;
     }
+
+    // 3. 设置对应流(视频流、音频流、字幕流)的选项。不过opts里面的一级指针一般得到的空值，后续遇到再详细分析
     for (i = 0; i < s->nb_streams; i++)
         opts[i] = filter_codec_opts(codec_opts, s->streams[i]->codecpar->codec_id,
                                     s, s->streams[i], NULL);
+
+    // 二级指针opts不是空，但里面的一级指针是空值
     return opts;
 }
 
@@ -2173,8 +2414,26 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 
 double get_rotation(AVStream *st)
 {
+    /*
+     * av_stream_get_side_data()：从信息流中获取边信息。
+     * 参1：流；参2：所需的边信息类型；参3：用于存储边信息大小的指针(可选)；
+     * 存在返回数据指针，，否则为NULL。
+     *
+     * AV_PKT_DATA_DISPLAYMATRIX：这个边数据包含一个描述仿射的3x3变换矩阵转换，
+     * 需要应用到解码的视频帧正确的显示。数据的详细描述请参见libavutil/display.h
+    */
     uint8_t* displaymatrix = av_stream_get_side_data(st,
                                                      AV_PKT_DATA_DISPLAYMATRIX, NULL);
+    if(displaymatrix){
+        printf("displaymatrix: %d\n", *displaymatrix);
+    }
+
+    /*
+     * av_display_rotation_get()：提取变换矩阵的旋转分量。
+     * 参1：转换矩阵。
+     * 返回转换旋转帧的角度(以度为单位)逆时针方向。角度将在[-180.0,180.0]范围内。如果矩阵是奇异的则返回NaN。
+     * @note：浮点数本质上是不精确的，所以调用者是建议在使用前将返回值舍入到最接近的整数。
+    */
     double theta = 0;
     if (displaymatrix)
         theta = -av_display_rotation_get((int32_t*) displaymatrix);
@@ -2185,7 +2444,7 @@ double get_rotation(AVStream *st)
         av_log(NULL, AV_LOG_WARNING, "Odd rotation angle.\n"
                "If you want to help, upload a sample "
                "of this file to ftp://upload.ffmpeg.org/incoming/ "
-               "and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)");
+               "and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)");// 上传样本，找ffmpeg帮忙
 
     return theta;
 }

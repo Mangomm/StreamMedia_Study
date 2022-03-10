@@ -303,7 +303,10 @@ char av_get_picture_type_char(enum AVPictureType pict_type);
 #include "pixfmt.h"
 
 /**
- * Return x default pointer in case p is NULL.
+ * @brief 若用户设置的内容，则返回用户设置的内容，否则去默认的内容。例如report报告时的文件名av_x_if_null(filename_template, "%p-%t.log")。
+ * @param p 指定的内容。例如用户的输入的文件名。
+ * @param x 默认的内容。例如默认的文件名。
+ * @return Return x default pointer in case p is NULL.
  */
 static inline void *av_x_if_null(const void *p, const void *x)
 {

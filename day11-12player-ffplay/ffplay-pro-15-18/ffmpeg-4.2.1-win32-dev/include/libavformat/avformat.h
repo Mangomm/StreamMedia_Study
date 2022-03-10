@@ -2363,8 +2363,7 @@ void av_program_add_stream_index(AVFormatContext *ac, int progid, unsigned int i
  * @param type              stream type: video, audio, subtitles, etc.
  * @param wanted_stream_nb  user-requested stream number,
  *                          or -1 for automatic selection
- * @param related_stream    try to find a stream related (eg. in the same
- *                          program) to this one, or -1 if none
+ * @param related_stream     mn
  * @param decoder_ret       if non-NULL, returns the decoder for the
  *                          selected stream
  * @param flags             flags; none are currently defined

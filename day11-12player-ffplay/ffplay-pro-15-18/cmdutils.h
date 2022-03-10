@@ -37,7 +37,7 @@
 /**
  * program name, defined by the program for show_version().
  */
-extern const char program_name[];
+extern const char program_name[];       // const char program_name[] = "ffplay";
 
 /**
  * program birth year, defined by the program for show_banner()
@@ -46,6 +46,9 @@ extern const int program_birth_year;
 
 extern AVCodecContext *avcodec_opts[AVMEDIA_TYPE_NB];
 extern AVFormatContext *avformat_opts;
+// 这5个都是全局的字典，
+// 关于字典的学习，see https://www.jianshu.com/p/89f2da631e16?utm_medium=timeline
+// 非常详细。字典里面包含了AVDictionaryEntry条目的个数count及其条目数组AVDictionaryEntry*。
 extern AVDictionary *sws_dict;
 extern AVDictionary *swr_opts;
 extern AVDictionary *format_opts, *codec_opts, *resample_opts;
