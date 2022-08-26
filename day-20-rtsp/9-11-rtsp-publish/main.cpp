@@ -88,7 +88,7 @@ int main()
         //1.url
         //2.udp
         properties.SetProperty("rtsp_url", RTSP_URL);
-        properties.SetProperty("rtsp_transport", "tcp");            // udp or tcp
+        properties.SetProperty("rtsp_transport", "udp");            // udp or tcp
         properties.SetProperty("rtsp_timeout", 5000);               // connect server timeout
         properties.SetProperty("rtsp_max_queue_duration", 1000);
 

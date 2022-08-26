@@ -61,6 +61,7 @@ public:
         // 这种情况解决方法是：在本程序可能会遇到超时的接口，可以再次调用该接口，以更新一次pre_time_，从而解决这种情况。
 
         // 关于GetTickCount， 详看https://blog.csdn.net/kevin_lp/article/details/89631034?spm=1001.2014.3001.5501博客。
+        // 更精准的可以使用QueryPerformanceFrequency + QueryPerformanceCounter(后续建议使用)：https://blog.csdn.net/xp178171640/article/details/118306073
             return (int64_t)GetTickCount();
         #else
         // linux使用的时间函数比较简单，gettimeofday()用来来得到从1970年1月1日0时0分0秒到现在的秒数

@@ -93,7 +93,7 @@ const int program_birth_year = 2003;
 #define AV_SYNC_THRESHOLD_MAX 0.1   // 100ms
 /*
  * If a frame duration is longer than this, it will not be duplicated to compensate AV sync
- * 如果一个帧的持续时间超过这个值，它将不会被重复的去补偿音视频同步。实际上这个值可以按照情况去修改。
+ * 如果一个帧的持续时间超过这个值，它将不会被重复的去补偿音视频同步。实际上这个值可以按照情况去修改。越小的话，会同步频繁，大的话则不会太频繁。
 */
 //#define AV_SYNC_FRAMEDUP_THRESHOLD 0.1
 #define AV_SYNC_FRAMEDUP_THRESHOLD 0.040
@@ -116,7 +116,8 @@ const int program_birth_year = 2003;
 #define EXTERNAL_CLOCK_SPEED_STEP 0.001
 
 /* we use about AUDIO_DIFF_AVG_NB A-V differences to make the average */
-#define AUDIO_DIFF_AVG_NB   20
+//#define AUDIO_DIFF_AVG_NB   20
+#define AUDIO_DIFF_AVG_NB   30
 
 /*
  * polls for possible required screen refresh at least this often, should be less than 1/fps
@@ -194,14 +195,14 @@ typedef struct Clock {
     // 当前时钟(如视频时钟)最后一次更新时间，也可称当前时钟时间
     double	last_updated;   // 最后一次更新的系统时钟
 
-    double	speed;          // 时钟速度控制，用于控制播放速度
+    double	speed;          // 时钟速度控制，用于控制播放速度.视频和音频时钟都不改变该播放速度(默认是1)，只有外部时钟才会去调整这个速度(包多加快速度，包少减慢速度)。
 
     // 播放序列，所谓播放序列就是一段连续的播放动作，一个seek操作会启动一段新的播放序列
     int	serial;             // clock is based on a packet with this serial
 
     int	paused;             // = 1 说明是暂停状态
 
-    // 指向packet_serial，即指向当前包队列的指针，用于过时的时钟检测。
+    // 指向packet_serial，即指向当前包队列的指针，用于过时的时钟检测。注意：这个_queue_serial是直接指向包队列的内存地址的。
     int *queue_serial;      /* pointer to the current packet queue serial, used for obsolete clock detection */
 } Clock;
 
@@ -382,7 +383,7 @@ typedef struct VideoState {
     double max_frame_duration;                  // 一帧最大间隔，被初始化成10或者3600. above this, we consider the jump a timestamp discontinuity(在此之上，我们认为跳转是时间戳的不连续)
                                                 // 3600的意思是0.04x90k=3600？个人认为不是这个意思，它只是单纯的代表一个秒数，并且最好尽可能大，例如这里是1小时的秒数。
                                                 // 认为它是一个秒数的根据是：compute_target_delay里面，直接使用fabs(diff)与max_frame_duration比较了，感觉它这个名字起得不太好。
-    struct SwsContext *img_convert_ctx;         // 视频尺寸格式变换
+    struct SwsContext *img_convert_ctx;         // 视频尺寸格式变换，用于将yuv转成对应的格式进行渲染。
     struct SwsContext *sub_convert_ctx;         // 字幕尺寸格式变换
     int eof;                                    // 是否读取结束
 
@@ -451,8 +452,8 @@ static const char *audio_codec_name;
 static const char *subtitle_codec_name;
 static const char *video_codec_name;
 double rdftspeed = 0.02;
-static int64_t cursor_last_shown;
-static int cursor_hidden = 0;
+static int64_t cursor_last_shown;   // 上一次鼠标显示的时间戳
+static int cursor_hidden = 0;       // 鼠标是否隐藏.0显示，1隐藏
 #if CONFIG_AVFILTER
 static const char **vfilters_list = NULL;
 static int nb_vfilters = 0;
@@ -563,6 +564,12 @@ int64_t get_valid_channel_layout(int64_t channel_layout, int channels)
  * @param q 包队列。可能是音视频、字幕包队列。
  * @param pkt 要插入的包。可能是数据包，也可能是个空包，用于刷掉帧队列剩余的帧。
  * @return 成功0 失败-1
+ *
+ * @note
+ * 队列操作：
+ * 1）first_pkt只保存第一个包进来时的值，所以first_pkt永远指向首包。
+ * 2）last_pkt用于动态操作队列，每put一个包，last_pkt指向该包。
+ * 3）由于last_pkt每次指向尾包，并且malloc节点时，节点的next是被置为NULL的，所以链表末尾包的next肯定是NULL.
 */
 static int packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
 {
@@ -590,11 +597,11 @@ static int packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
                                 //这里看到，添加flush_pkt时的这个节点的serial也是自增。
 
     /*
-     * 4. 队列操作：如果last_pkt为空，说明队列是空的，新增节点为队头；例如包队列只有一个包时，first_pkt、last_pkt指向同一个包。
-     *      注意last_pkt不是指向NULL，和平时的设计不一样，不过内部的next是可能指向NULL。
-     * 否则，队列有数据，则让原队尾的next为新增节点。 最后将队尾指向新增节点。
+     * 4. 队列操作：
+     * 1）first_pkt只保存第一个包进来时的值，所以first_pkt永远指向首包。
+     * 2）last_pkt用于动态操作队列，每put一个包，last_pkt指向该包。
+     * 3）由于last_pkt每次指向尾包，并且malloc节点时，节点的next是被置为NULL的，所以链表末尾包的next肯定是NULL.
      *
-     * 他这个队列的特点：1）first_pkt只操作一次，永远指向首包； 2）last_pkt永远指向尾包，不会指向NULL，但尾包last_pkt内部的next永远指向NULL。
      */
     if (!q->last_pkt)
         q->first_pkt = pkt1;
@@ -969,7 +976,7 @@ static int decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
                     ret = got_frame ? 0 : (pkt.data ? AVERROR(EAGAIN) : AVERROR_EOF);
                 }
             } else {
-                if (avcodec_send_packet(d->avctx, &pkt) == AVERROR(EAGAIN)) {
+                if (avcodec_send_packet(d->avctx, &pkt) == AVERROR(EAGAIN)) {// 该函数参数pkt是传空包的话，会刷新解码器缓存.
                     // 如果走进来这里，说明avcodec_send_packet、avcodec_receive_frame都返回EAGAIN，这是不正常的，需要保存这一个包到解码器中，等编码器恢复正常再拿来使用
                     av_log(d->avctx, AV_LOG_ERROR, "Receive_frame and send_packet both returned EAGAIN, which is an API violation.\n");
                     d->packet_pending = 1;
@@ -1204,10 +1211,10 @@ static int64_t frame_queue_last_pos(FrameQueue *f)
 static void decoder_abort(Decoder *d, FrameQueue *fq)
 {
     packet_queue_abort(d->queue);   // 终止packet队列，packetQueue的abort_request被置为1
-    frame_queue_signal(fq);         // 唤醒Frame队列, 以便退出
-    SDL_WaitThread(d->decoder_tid, NULL);   // 等待解码线程退出
+    frame_queue_signal(fq);         // 唤醒Frame队列, 以便退出.主要是唤醒帧队列阻塞在frame_queue_peek_writable/frame_queue_peek_readable的时候，以便让程序回到解码线程中退出。
+    SDL_WaitThread(d->decoder_tid, NULL);   // 上面唤醒帧队列后，就可以回收解码线程，等待解码线程退出
     d->decoder_tid = NULL;          // 线程ID重置
-    packet_queue_flush(d->queue);   // 情况packet队列，并释放数据
+    packet_queue_flush(d->queue);   // 清空packet队列，并释放数据
 }
 
 static inline void fill_rectangle(int x, int y, int w, int h)
@@ -1365,6 +1372,17 @@ static void get_sdl_pix_fmt_and_blendmode(int format, Uint32 *sdl_pix_fmt, SDL_B
  * @param frame 要显示的一帧图片。
  * @param img_convert_ctx 图像尺寸转换上下文。
  * @return 成功0；失败返回-1.
+ *
+ * 以AVFrame保存成bmp抓图为例，讲解yuv的3平面长度都是负数的情况下的处理原因。
+ * AVFrame保存成bmp注意点：
+ * 1）需要先转成RGB格式(这里转成32位的真彩色图，24位的也可以)，在进行保存，因为bmp存储的数据是使用RGB格式。
+ * 2）y、u、v以及RGB等格式的存储方式有两种存储方式：一种是从上往下扫描，另一种是从下往上扫描。
+ *	  所以如果我们截图看到是上下翻转的，需要进行存储方式的转换，有两种翻转处理：
+ *		1）手动翻转图像。2）在保存bmp时，改变bmpinfo.biHeight的正负号即可。
+ * bmp格式可以参考：https://blog.csdn.net/aidem_brown/article/details/80500637
+ * 手动上下翻转的原理可以参考：https://blog.csdn.net/qq_36568418/article/details/113563986
+ *
+ * 总结抓图yuv->bmp：1）需要转成rgb在封装成bmp；2）需要知道如何上下翻转图片。3）了解bmp的格式组成。
 */
 static int upload_texture(SDL_Texture **tex, AVFrame *frame, struct SwsContext **img_convert_ctx) {
     int ret = 0;
@@ -1426,7 +1444,9 @@ static int upload_texture(SDL_Texture **tex, AVFrame *frame, struct SwsContext *
             ret = SDL_UpdateYUVTexture(*tex, NULL, frame->data[0], frame->linesize[0],
                     frame->data[1], frame->linesize[1],
                     frame->data[2], frame->linesize[2]);
-        } else if (frame->linesize[0] < 0 && frame->linesize[1] < 0 && frame->linesize[2] < 0) {// yuv的3平面长度都是负数的情况下，这里可以先忽略，后续再研究
+        } else if (frame->linesize[0] < 0 && frame->linesize[1] < 0 && frame->linesize[2] < 0) {
+            // yuv的3平面长度都是负数的情况下，表示存储的数据是从下往上扫描，所以我们需要从下面开始读取数据。否则显示的图片是上下翻转的情况。
+            // 而上面yuv的3平面长度都是正数，表示存储的数据的从上往下的，直接传进即可。
             ret = SDL_UpdateYUVTexture(*tex, NULL, frame->data[0] + frame->linesize[0] * (frame->height - 1), -frame->linesize[0],
                     frame->data[1] + frame->linesize[1] * (AV_CEIL_RSHIFT(frame->height, 1) - 1), -frame->linesize[1],
                     frame->data[2] + frame->linesize[2] * (AV_CEIL_RSHIFT(frame->height, 1) - 1), -frame->linesize[2]);
@@ -1440,7 +1460,7 @@ static int upload_texture(SDL_Texture **tex, AVFrame *frame, struct SwsContext *
     // 3.3 frame格式对应其他SDL像素格式，不用进行图像格式转换，直接调用SDL_UpdateTexture()更新SDL texture
     default:
         if (frame->linesize[0] < 0) {
-            ret = SDL_UpdateTexture(*tex, NULL, frame->data[0] + frame->linesize[0] * (frame->height - 1), -frame->linesize[0]);// 这里可以先忽略，后续再研究
+            ret = SDL_UpdateTexture(*tex, NULL, frame->data[0] + frame->linesize[0] * (frame->height - 1), -frame->linesize[0]);// 从下往上扫描
         } else {
             ret = SDL_UpdateTexture(*tex, NULL, frame->data[0], frame->linesize[0]);
         }
@@ -1825,6 +1845,7 @@ static void stream_component_close(VideoState *is, int stream_index)
  * @brief 清理播放器中的内容。stream_open失败或者程序结束do_exit时调用。
  * @param 播放器实例。
  * @return void。
+ * @note stream_close内部的stream_component_close可以通过使能包队列中断变量，使对应的解码线程停止。
  */
 static void stream_close(VideoState *is)
 {
@@ -1836,7 +1857,7 @@ static void stream_close(VideoState *is)
 
     /* close each stream */
     if (is->audio_stream >= 0)
-        stream_component_close(is, is->audio_stream);
+        stream_component_close(is, is->audio_stream);// stream_component_close能够把对应的解码线程停止
     if (is->video_stream >= 0)
         stream_component_close(is, is->video_stream);
     if (is->subtitle_stream >= 0)
@@ -2004,12 +2025,19 @@ static double get_clock(Clock *c)
         double time = av_gettime_relative() / 1000000.0;
         // 1）c->pts_drift + time：代表本次的pts，因为系统时钟time是一直变化的，需要利用它和set_clock对时得出的pts_drift重新计算。
         // 2）(time - c->last_updated)：代表此时系统时间和上一次系统时间的间隔。
-        // 3）(1.0 - c->speed)：主要用来控制播放速度。例如倍速speed=2，假设上一次系统时间到本次系统时间间隔=1s，
-        //      c->pts_drift + time=5s，本次time=6.04s，那么上一次time=5.04s，得出pts_drift=-40ms；
-        //      所以正常倍速=1来说，本次显示的时间是6s，
-        //      但是2倍速后，(time - c->last_updated) * (1.0 - c->speed) = 1*(-1)=-1。   6-(-1)=7s。可以看到即使是2倍速，pts也不一定是成倍增加的。
-        //      看不懂也没关系，因为正常播放时，c->speed都是1。所以可以先不用考虑 c->pts_drift + time 后面的内容。
-        //      ffpaly好像也没有提供变速的参数。
+        // 3）(1.0 - c->speed)：主要用来控制播放速度。
+        // 4）所以(time - _last_updated) * (1.0 - _speed)就是求因外部时钟改变_speed后，两帧间隔的实际系统时间差。因为速度改变过，(time - _last_updated)肯定不是真正两个系统时间间隔。
+        //  例如，假设_pts_drift + time=800s，(time - _last_updated)正常结果是=40ms，而_speed=0.9，
+        //  那么得出真正的两帧系统时间差(time - _last_updated) * (1.0 - _speed)=4ms，那么800s-4ms=799.996s，所以播放速度变慢，会自动减少返回的pts以达到降速效果。
+        // 同样假设速率变成1.1，结果是800.004s，所以播放速度变快，，会自动增加返回的pts以达到加速效果。
+
+        // 5）外部时钟改变_speed的原理：包数少则减少_speed；包多则增加_speed。
+        // 所以经过上面的例子得出：
+        //      1、当包少时，速率变慢，例如0.9速率时，返回的pts是_pts_drift + time - (time - _last_updated) * (1.0 - _speed)=799.996s，而原本是800s，
+        //          也就是说将动态计算的pts减去了4ms，最终使两帧间隔变长。简单说就是：本来正常是800s到下一帧800.04s的间距(假设正常两帧差是40ms)，由于降速，变成了799.996到下一帧800.04s的间距。
+        //      2、当包多时，速率变快，同理例如1.1速率时，返回的pts是_pts_drift + time - (time - _last_updated) * (1.0 - _speed)=800.004s，而原本是800s，
+        //          也就是说将动态计算的pts加上了4ms，最终使两帧间隔变短。简单说就是：本来正常是800s到下一帧800.04s的间距，由于加速，变成了800.004s到下一帧800.04s的间距。
+        // 注：这里4）5）以及举例的例子只是自己对_speed的见解，可能不一定准确，但是目前这样理解个人感觉是最好的。1）2）3）的意思必定是正确的。如果没有用外部时钟，那么就不需要管_speed的值。
         return c->pts_drift + time - (time - c->last_updated) * (1.0 - c->speed);
     }
 }
@@ -2493,6 +2521,7 @@ retry:
         if (frame_queue_nb_remaining(&is->pictq) == 0) {
             // nothing to do, no picture to display in the queue
             // 什么都不做，队列中没有图像可显示
+            printf("frame_queue_nb_remaining(&is->pictq) == 0\n");
         } else { // 重点是音视频同步
             double last_duration, duration, delay;
             Frame *vp, *lastvp;
@@ -2585,7 +2614,7 @@ retry:
 
             SDL_LockMutex(is->pictq.mutex);
             if (!isnan(vp->pts))
-                update_video_pts(is, vp->pts, vp->pos, vp->serial); // 更新video时钟，以及更新从时钟(vidclk)到主时钟(extclk)
+                update_video_pts(is, vp->pts, vp->pos, vp->serial); // 更新video时钟，以及更新从时钟(vidclk)到外部时钟(extclk)
             SDL_UnlockMutex(is->pictq.mutex);
 
             /*
@@ -2855,6 +2884,7 @@ static int get_video_frame(VideoState *is, AVFrame *frame)
  * @return >=0成功，负数失败。
  *
  * @note 该函数可以参考09-05-crop-flip复杂过滤器的实现，基本一样。
+ *  该函数可以使用参数-vf subtitles=output.mkv:si=0 output.mkv去调试。
  */
 #if CONFIG_AVFILTER
 static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
@@ -2866,8 +2896,9 @@ static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
 
     // 1. 判断用户是否输入了复杂的过滤器字符串，如果有，则在简单过滤器结构的基础上，再添加复杂过滤的结构。
     if (filtergraph) {
-        // 1.1 开辟输入输出的AVFilterInOut内存(09-05-crop-flip没开，开不开应该问题不大，不过还没测试过)
-        outputs = avfilter_inout_alloc();
+        // 1.1 开辟输入输出的AVFilterInOut内存(09-05-crop-flip没开辟，开不开应该问题不大，不过还没测试过)
+        // 注：如果有复杂的滤波器过程，使用AVFilterInOut进行连接；没有则则直接调用avfilter_link进行连接。
+        outputs = avfilter_inout_alloc();       // AVFilterInOut结构体只是用于管理AVFilterContext连接的链表.
         inputs  = avfilter_inout_alloc();
         if (!outputs || !inputs) {
             ret = AVERROR(ENOMEM);
@@ -2876,16 +2907,23 @@ static int configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
 
         outputs->name       = av_strdup("in");
         outputs->filter_ctx = source_ctx;       // 输入的AVFilterInOut->filter_ctx附属在输入源AVFilterContext上(看09-05的滤波过程图)
-        outputs->pad_idx    = 0;
+        outputs->pad_idx    = 0;                // 使用source_ctx的下标为0的AVFilterPad进行连接。因为一个AVFilterContext可能具有多个AVFilterPad。
+                                                // see https://blog.csdn.net/weixin_44517656/article/details/120211710的第3点的基本结构图。
         outputs->next       = NULL;
 
         inputs->name        = av_strdup("out");
         inputs->filter_ctx  = sink_ctx;         // 输出的AVFilterInOut->filter_ctx附属在输出源AVFilterContext上
         inputs->pad_idx     = 0;
         inputs->next        = NULL;
+        // 这里留个疑问：为啥outputs指向源AVFilterContext，而inputs指向输出AVFilterContext？
+        // 答：outputs、inputs只是命名，outputs在AVFilterContext层面是输入，而在AVFilterPad层面是输出，所以这里命名输入输出都行。
+        // inputs同理，在AVFilterContext层面是输出，而在AVFilterPad层面是输入。AVFilterPad就是上述链接第3点基本结构图的那些小菱形。
+        // 所以这里看到outputs、inputs的命名，ffplay是以AVFilterPad层面进行命名的。
+        // 09-05-crop-flip的例子在解析复杂字符串时，不需要对AVFilterInOut *outputs, *inputs;进行这个8行语句赋值，后续可以自行测试。
 
         // 1.2 1）解析字符串；2）并且将滤波图的集合放在inputs、outputs中。 与avfilter_graph_parse2功能是一样的，参考(09-05-crop-flip)
         // 注意这里成功的话，根据复杂的字符串结构，输入输出的AVFilterContext会有Link操作，所以不需要再次调用avfilter_link
+        // 并且经过我看源码比对，avfilter_graph_parse_ptr将AVFilterInOut链表解析后，最终还是调用avfilter_link去连接的。
         if ((ret = avfilter_graph_parse_ptr(graph, filtergraph, &inputs, &outputs, NULL)) < 0)
             goto fail;
     }
@@ -3125,21 +3163,31 @@ static int configure_audio_filters(VideoState *is, const char *afilters, int for
         return AVERROR(ENOMEM);
     is->agraph->nb_threads = filter_nbthreads;
 
-    // 2. 遍历字典sws_dict
+    // 2. 遍历字典sws_dict，并将里面的选项以key=value的形式保存在aresample_swr_opts，并最终使用av_opt_set设置到系统过滤器。
+    // 这里大概说一下av_dict_get的遍历：
+    // 1）首先key=""，代表获取的是首个字符串，参3为e，代表这个字符串的前面要求等于e。由于首次e=NULL，那么第一次遍历就是获取第一个字符串。
+    // 2）根据while，如果获取的字符串为空就跳出，不为空则继续遍历。
+    // 3）然后av_dict_get内部的key应该会自动自增，e此时变成首个字符串，以此类推，这样就做到遍历AVDictionary结构体。
     while ((e = av_dict_get(swr_opts, "", e, AV_DICT_IGNORE_SUFFIX)))
         av_strlcatf(aresample_swr_opts, sizeof(aresample_swr_opts), "%s=%s:", e->key, e->value);// av_strlcatf是追加字符串
+
     if (strlen(aresample_swr_opts))
         aresample_swr_opts[strlen(aresample_swr_opts)-1] = '\0';// 长度末尾补0，所以上面追加完字符串的冒号：能被去掉。
+
+    // 把_swr_opts的内容设置到_agraph中，那么此时这个系统过滤器在过滤时就会使用这些选项。see https://blog.csdn.net/qq_17368865/article/details/79101659
+    // 等价于：av_opt_set(pCodecCtx,“b”,”400000”,0);等参数的设置。所以与下面configure_filtergraph是否设置复杂过滤器字符串是不一样的。
     av_opt_set(is->agraph, "aresample_swr_opts", aresample_swr_opts, 0);
 
     // 3. 使用简单方法创建输入滤波器AVFilterContext(获取输入源filter--->buffer). 输入源都是需要传asrc_args相关参数的。
     // 此时输入源的audio_filter_src是从AVCodecContext读取的。
+    // 创建简单的滤波器只需要在avfilter_graph_create_filter时添加字符串参数asrc_args；而复杂的滤波器需要用到avfilter_graph_parse2解析字符串。
+    // 3.1 创建输入滤波器AVFilterContext，并设置音频相关参数。
     ret = snprintf(asrc_args, sizeof(asrc_args),
                    "sample_rate=%d:sample_fmt=%s:channels=%d:time_base=%d/%d",
                    is->audio_filter_src.freq, av_get_sample_fmt_name(is->audio_filter_src.fmt),
                    is->audio_filter_src.channels,
                    1, is->audio_filter_src.freq);
-    if (is->audio_filter_src.channel_layout)
+    if (is->audio_filter_src.channel_layout)// 如果通道布局不为0，把通道布局也设置到输入滤波器中。
         snprintf(asrc_args + ret, sizeof(asrc_args) - ret,
                  ":channel_layout=0x%"PRIx64,  is->audio_filter_src.channel_layout);
 
@@ -3634,7 +3682,7 @@ static int synchronize_audio(VideoState *is, int nb_samples)
         if (!isnan(diff) && fabs(diff) < AV_NOSYNC_THRESHOLD) {
             //printf("1 audio_diff_cum: %lf, diff: %lf, audio_diff_avg_coef: %lf\n", is->audio_diff_cum, diff, is->audio_diff_avg_coef);
             /*
-             * audio_diff_cum代表本次的误差(diff)，加上历史的权重比误差(is->audio_diff_avg_coef * is->audio_diff_cum)之和。
+             * audio_diff_cum代表：本次的误差(diff)，加上历史的权重比误差(is->audio_diff_avg_coef * is->audio_diff_cum)之和。
              * 并且AUDIO_DIFF_AVG_NB次数越多，历史的权重比误差占比越小。
             */
             is->audio_diff_cum = diff + is->audio_diff_avg_coef * is->audio_diff_cum;
@@ -3656,6 +3704,7 @@ static int synchronize_audio(VideoState *is, int nb_samples)
                 //avg_diff = diff; // 这样也可以，但是没有上面平滑。
 
                 // 1.5 如果avg_diff大于同步阈值，则进行调整，否则在[-audio_diff_threshold, +audio_diff_threshold]范围内不调整，与视频类似。
+                // 音频同步到视频原理：超前，增加采样点个数。落后，减少采样点个数。diff的正负代表增加还是减少采样点个数。
                 if (fabs(avg_diff) >= is->audio_diff_threshold) {
                     /*
                      * 根据公式：采样点个数/采样频率=秒数，得出：采样点个数=秒数*采样频率。
@@ -3872,6 +3921,8 @@ static int audio_decode_frame(VideoState *is)
         // 重采样输出参数1：输出音频缓冲区尺寸
         uint8_t **out = &is->audio_buf1; //真正分配缓存audio_buf1，最终给到audio_buf使用
         // 重采样输出参数2：输出音频缓冲区
+        // out_count是求重采样时，输出的样本数。公式：out_count=(in_count*out_sample_rate)/in_sample_rate
+        // 而out_size是将样本数转成字节数.公式：通道数 x 采样个数 x 采样位数，这里使用av_samples_get_buffer_size函数代替
         int out_count = (int64_t)wanted_nb_samples * is->audio_tgt.freq / af->frame->sample_rate
                 + 256;// 留个疑问，计算重采样输出的采样点个数为啥加上256？？？ see 下面if(len2 == out_count)的解释。
         int out_size  = av_samples_get_buffer_size(NULL, is->audio_tgt.channels,
@@ -4351,7 +4402,7 @@ static int stream_component_open(VideoState *is, int stream_index)
         forced_codec_name =    video_codec_name; break;
     }
 
-    /* 6. 如果有名字，又根据名字去找解码器。 但是感觉没必要啊？ */
+    /* 6. 如果有名字，又根据名字去找解码器。 但是感觉没必要啊？答：有必要，优先以用户指定的解码器，若用户指定的解码器找不到则报错。 */
     if (forced_codec_name)
         codec = avcodec_find_decoder_by_name(forced_codec_name);
     if (!codec) {
@@ -4363,7 +4414,8 @@ static int stream_component_open(VideoState *is, int stream_index)
         goto fail;
     }
 
-    avctx->codec_id = codec->id; // 这里应该是防止4的avctx->codec_id找不到解码器，而6找到的情况下，需要给avctx->codec_id重新赋值。
+    avctx->codec_id = codec->id; // 用户指定了解码器并找到的情况下，需要给avctx->codec_id重新赋值。
+
     /* 7. 给解码器的以哪种分辨率进行解码。 会进行检查用户输入的最大低分辨率是否被解码器支持 */
     if (stream_lowres > codec->max_lowres) {// codec->max_lowres: 解码器支持的最大低分辨率值
         av_log(avctx, AV_LOG_WARNING, "The maximum value for lowres supported by the decoder is %d\n", codec->max_lowres);
@@ -4448,9 +4500,9 @@ static int stream_component_open(VideoState *is, int stream_index)
         /* 5）.2 init averaging filter 初始化averaging滤镜, 下面3个变量只有在非audio master时使用，audio_diff_cum也是。 */
         /*
          * 1）exp(x):返回以e为底的x次方，即e^x。注意和对数不一样，对数公式有：y=log(a)(x)，a是低，那么有：x=a^y。和这个函数不一样，不要代进去混淆了。
-         * 2）log(x)：以e为底的对数。这个才可以代入对数公式。例如log(10)=y，那么e^y=10，y≈2.30258509。其中e=2.718281828...
+         * 2）log(x)：以e为底的对数。这个才可以代入对数公式。例如log(10)=y，那么y=loge10，那么e^y=10，y≈2.30258509。其中e=2.718281828...
          *
-         * 3）log(0.01)=y，那么e^y=0.01，y≈-4.60517018(计算器计出来即可)。根据对数的图，这个结果没问题。
+         * 3）log(0.01)=y，那么y=loge0.01，那么e^y=0.01，y≈-4.60517018(计算器计出来即可)。根据对数的图，这个结果没问题。
          * 那么log(0.01) / AUDIO_DIFF_AVG_NB = -4.60517018 / 20 ≈ -0.2302585092。
          * 那么exp(-0.2302585092) ≈ e^(-0.2302585092)=0.7943282347242815。可以使用pow(a,n)去验证。
         */
@@ -4659,6 +4711,7 @@ static int read_thread(void *arg)
     // nobuffer debug相关可参考：https://blog.51cto.com/fengyuzaitu/3028132.
     // 字典相关可参考：https://www.jianshu.com/p/89f2da631e16?utm_medium=timeline(包含avformat_open_input参4支持的参数)
     // 关于延时选项可参考：https://www.it1352.com/2040727.html
+    printf("is->filename: %s\n", is->filename);
     err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
     if (err < 0) {
         print_error(is->filename, err);
@@ -4779,6 +4832,7 @@ static int read_thread(void *arg)
         if (type >= 0 && wanted_stream_spec[type] && st_index[type] == -1){
             // avformat_match_stream_specifier：判断当前st是否与用户的wanted_stream_spec[type]匹配，具体如何判断需要看源码。
             // 可以这样测试：-ast 1，i=0看到第一次虽然st->codecpar->codec_type也是音频流，但是并不匹配，i=1时才会匹配。
+            // -ast 1时，write_option会在属于音频的下标中标记为"1"
             if (avformat_match_stream_specifier(ic, st, wanted_stream_spec[type]) > 0)
                 st_index[type] = i; // st_index和和wanted_stream_spec的区别：
                                     //通过debug发现基本是一样的，wanted_stream_spec保存用户指定的流下标(存字符串)，st_index用于此时的记录想要播放的下标(存数值)
@@ -5023,6 +5077,11 @@ static int read_thread(void *arg)
         ret = av_read_frame(ic, pkt); // 调用不会释放pkt的数据，需要我们自己去释放packet的数据
         // 8 检测数据是否读取完毕
         if (ret < 0) {
+            // 这里是正常退出，所以需要刷空包去清空解码器中剩余的数据去显示。但个人觉得使用avio_feof判断不太正确。
+            // 正常退出流程：1）先发送空包，以清空pkt队列、帧队列、解码器，因为读线程av_read_frame会一直EOF，然后continue，所以一直在第6步等待解码线程清空的工作；
+            //              2）解码线程读到空包清空解码器后，解码线程会解码读到EOF，标记为_finished=_serial；
+            //                  3）最终读线程在上面第6步退出。
+            //              所以读到EOF后，刷空就能把pkt队列、帧队列、解码器内的内容清除掉。
             // avio_feof：当且仅当在文件末尾或读取时发生错误时返回非零。
             // 真正读到文件末尾 或者 文件读取错误 并且 文件还未标记读取完毕，此时认为数据读取完毕。
             // 在这里，avio_feof的作用是判断是否读取错误，因为读到文件末尾由AVERROR_EOF判断了。
@@ -5037,14 +5096,16 @@ static int read_thread(void *arg)
                     packet_queue_put_nullpacket(&is->subtitleq, is->subtitle_stream);
                 is->eof = 1;        // 标记文件读取完毕
             }
+            // 这里是意外退出的，所以就不刷空包显示剩余的数据，直接退出。
             if (ic->pb && ic->pb->error){
                 // 读取错误，读数据线程直接退出
                 break;
             }
 
             // 这里应该是AVERROR(EAGAIN)，代表此时读不到数据，需要睡眠一下再读。
+            // AVERROR_EOF也会执行这里的内容。
             SDL_LockMutex(wait_mutex);
-            SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);// 为啥读线程满时用wait_mutex这把锁，但是解码线程好像没有这把锁？
+            SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);// 为啥读线程满时用wait_mutex这把锁，但是解码线程好像没有这把锁？因为解码线程只需要条件变量通知即可。
             SDL_UnlockMutex(wait_mutex);
             continue;		// 继续循环
         } else {
@@ -5303,6 +5364,8 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
      * SDL_PeekEvents用于读取事件，在调用该函数之前，必须调用SDL_PumpEvents搜集键盘等事件
      */
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT)) {
+        // 如果光标没隐藏并且光标显示时长已经超过1ms，那么将其隐藏.
+        // 这个功能就是实现如果用户在一定时间没有操作鼠标，那么将其隐藏.
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
             /*
              * SDL_ShowCursor：切换光标是否显示。
@@ -5846,6 +5909,7 @@ void show_help_default(const char *opt, const char *arg)
 }
 
 /* Called from the main */
+// 倍速实现参考https://blog.csdn.net/u013113678/article/details/114266843.
 int main(int argc, char **argv)
 {
     int flags;
